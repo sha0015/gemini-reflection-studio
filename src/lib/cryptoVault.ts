@@ -1,25 +1,34 @@
 /**
  * Client-Side WebCrypto AES-GCM & PBKDF2 Encryption Vault
- * 
- * Guarantees that raw journal entries, message threads, summaries, and AI reflection
- * replies are encrypted in the user's browser before ever touching Firestore or network storage.
- * 
- * Plaintext exists only in local memory and transiently during API calls to Gemini —
- * at rest in Firestore, it is strictly an opaque ciphertext envelope.
+ *
+ * Journal content is encrypted in the browser under a random per-entry data key (DEK)
+ * before it is ever written to Firestore. The DEK itself is independently wrapped under
+ * two secrets derived via PBKDF2 -- the user's passphrase and their 12-word recovery
+ * phrase -- so either secret alone can unlock an entry. Firestore only ever stores the
+ * ciphertext and the two wrapped-key envelopes; plaintext never reaches the server.
  */
 
+export interface KeyWrap {
+  salt: string;   // Base64-encoded 16-byte PBKDF2 salt for this secret
+  iv: string;      // Base64-encoded 12-byte AES-GCM IV used to wrap the data key
+  wrappedKey: string; // Base64-encoded ciphertext of the raw 32-byte data key
+}
+
 export interface CipherEnvelope {
-  v: number;              // Version (1)
-  iv: string;             // Base64-encoded 12-byte initialization vector
-  salt: string;           // Base64-encoded 16-byte PBKDF2 salt
-  ct: string;             // Base64-encoded ciphertext
+  v: number;              // Envelope format version (2 = dual key-wrap)
+  iv: string;             // Base64-encoded 12-byte IV used to encrypt the content
+  ct: string;              // Base64-encoded ciphertext of the content
   tagLength?: number;     // 128
   encryptedAt: string;
+  keyWraps: {
+    passphrase: KeyWrap;
+    recovery: KeyWrap;
+  };
 }
 
 // Convert ArrayBuffer to Base64
-export function bufferToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
+export function bufferToBase64(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   let binary = '';
   for (let i = 0; i < bytes.byteLength; i++) {
     binary += String.fromCharCode(bytes[i]);
@@ -37,21 +46,21 @@ export function base64ToBuffer(b64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-// Derive a CryptoKey from passphrase + salt using PBKDF2
-export async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
+// Derive a CryptoKey from a secret (passphrase or recovery phrase) + salt using PBKDF2
+export async function deriveKey(secret: string, salt: Uint8Array): Promise<CryptoKey> {
   const enc = new TextEncoder();
   const keyMaterial = await window.crypto.subtle.importKey(
     'raw',
-    enc.encode(passphrase),
+    enc.encode(secret),
     { name: 'PBKDF2' },
     false,
-    ['deriveBits', 'deriveKey']
+    ['deriveKey']
   );
 
   return window.crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt: salt,
+      salt: salt as BufferSource,
       iterations: 100000,
       hash: 'SHA-256'
     },
@@ -62,60 +71,93 @@ export async function deriveKey(passphrase: string, salt: Uint8Array): Promise<C
   );
 }
 
-/**
- * Encrypt arbitrary JSON serializable object or string with a user passphrase
- */
-export async function encryptClientSide<T>(data: T, passphrase: string): Promise<CipherEnvelope> {
+async function aesGcmEncrypt(key: CryptoKey, iv: Uint8Array, bytes: Uint8Array): Promise<ArrayBuffer> {
+  return window.crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv as BufferSource, tagLength: 128 }, key, bytes as BufferSource);
+}
+
+async function aesGcmDecrypt(key: CryptoKey, iv: Uint8Array, bytes: Uint8Array): Promise<ArrayBuffer> {
+  return window.crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as BufferSource, tagLength: 128 }, key, bytes as BufferSource);
+}
+
+async function wrapDataKey(dek: Uint8Array, secret: string): Promise<KeyWrap> {
   const salt = window.crypto.getRandomValues(new Uint8Array(16));
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveKey(passphrase, salt);
+  const kek = await deriveKey(secret, salt);
+  const wrapped = await aesGcmEncrypt(kek, iv, dek);
+  return {
+    salt: bufferToBase64(salt),
+    iv: bufferToBase64(iv),
+    wrappedKey: bufferToBase64(wrapped)
+  };
+}
 
+async function unwrapDataKey(wrap: KeyWrap, secret: string): Promise<Uint8Array> {
+  const salt = new Uint8Array(base64ToBuffer(wrap.salt));
+  const iv = new Uint8Array(base64ToBuffer(wrap.iv));
+  const kek = await deriveKey(secret, salt);
+  const raw = await aesGcmDecrypt(kek, iv, new Uint8Array(base64ToBuffer(wrap.wrappedKey)));
+  return new Uint8Array(raw);
+}
+
+/**
+ * Encrypt arbitrary JSON-serializable data under a random data key, then wrap that
+ * data key independently under the passphrase and the recovery phrase. Either secret
+ * can later decrypt the content on its own via decryptClientSide.
+ */
+export async function encryptClientSide<T>(data: T, passphrase: string, recoveryPhrase: string): Promise<CipherEnvelope> {
+  const dek = window.crypto.getRandomValues(new Uint8Array(32));
+  const dekKey = await window.crypto.subtle.importKey('raw', dek as BufferSource, { name: 'AES-GCM' }, false, ['encrypt']);
+
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
   const enc = new TextEncoder();
   const plaintextBytes = enc.encode(JSON.stringify(data));
+  const cipherBuffer = await aesGcmEncrypt(dekKey, iv, plaintextBytes);
 
-  const cipherBuffer = await window.crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv: iv,
-      tagLength: 128
-    },
-    key,
-    plaintextBytes
-  );
+  const [passphraseWrap, recoveryWrap] = await Promise.all([
+    wrapDataKey(dek, passphrase),
+    wrapDataKey(dek, recoveryPhrase)
+  ]);
 
   return {
-    v: 1,
+    v: 2,
     iv: bufferToBase64(iv),
-    salt: bufferToBase64(salt),
     ct: bufferToBase64(cipherBuffer),
     tagLength: 128,
-    encryptedAt: new Date().toISOString()
+    encryptedAt: new Date().toISOString(),
+    keyWraps: {
+      passphrase: passphraseWrap,
+      recovery: recoveryWrap
+    }
   };
 }
 
 /**
- * Decrypt a CipherEnvelope back into its original JSON data
+ * Decrypt a CipherEnvelope using either the passphrase or the recovery phrase --
+ * whichever secret the caller has. Tries both key-wrap slots against the supplied
+ * secret since the caller doesn't know in advance which one it is.
  */
-export async function decryptClientSide<T>(envelope: CipherEnvelope, passphrase: string): Promise<T> {
-  const salt = new Uint8Array(base64ToBuffer(envelope.salt));
+export async function decryptClientSide<T>(envelope: CipherEnvelope, secret: string): Promise<T> {
   const iv = new Uint8Array(base64ToBuffer(envelope.iv));
-  const cipherBytes = base64ToBuffer(envelope.ct);
+  const cipherBytes = new Uint8Array(base64ToBuffer(envelope.ct));
 
-  const key = await deriveKey(passphrase, salt);
+  let dek: Uint8Array | null = null;
+  for (const wrap of [envelope.keyWraps.passphrase, envelope.keyWraps.recovery]) {
+    try {
+      dek = await unwrapDataKey(wrap, secret);
+      break;
+    } catch {
+      // Wrong slot for this secret -- try the other one.
+    }
+  }
 
-  const decryptedBuffer = await window.crypto.subtle.decrypt(
-    {
-      name: 'AES-GCM',
-      iv: iv,
-      tagLength: 128
-    },
-    key,
-    cipherBytes
-  );
+  if (!dek) {
+    throw new Error('Incorrect passphrase or recovery phrase.');
+  }
 
+  const dekKey = await window.crypto.subtle.importKey('raw', dek as BufferSource, { name: 'AES-GCM' }, false, ['decrypt']);
+  const decryptedBuffer = await aesGcmDecrypt(dekKey, iv, cipherBytes);
   const dec = new TextDecoder();
-  const jsonStr = dec.decode(decryptedBuffer);
-  return JSON.parse(jsonStr) as T;
+  return JSON.parse(dec.decode(decryptedBuffer)) as T;
 }
 
 // 12-word mnemonic recovery phrase generator
@@ -132,7 +174,7 @@ export function generateRecoveryPhrase(): string {
   const words: string[] = [];
   const randomArray = new Uint8Array(12);
   window.crypto.getRandomValues(randomArray);
-  
+
   for (let i = 0; i < 12; i++) {
     const wordIndex = randomArray[i] % MNEMONIC_WORDS.length;
     words.push(MNEMONIC_WORDS[wordIndex]);

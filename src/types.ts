@@ -78,13 +78,22 @@ export interface DistressAssessment {
   resources: DistressResource[];
 }
 
+export interface KeyWrap {
+  salt: string;
+  iv: string;
+  wrappedKey: string;
+}
+
 export interface EncryptedEnvelope {
   v: number;
   iv: string;
-  salt: string;
   ct: string;
   tagLength?: number;
   encryptedAt: string;
+  keyWraps: {
+    passphrase: KeyWrap;
+    recovery: KeyWrap;
+  };
 }
 
 export interface JournalEntry {
@@ -107,6 +116,8 @@ export interface JournalEntry {
   // Client-Side Zero-Knowledge Encryption
   isClientEncrypted?: boolean;
   encryptedEnvelope?: EncryptedEnvelope;
+  needsPassphrase?: boolean;
+  decryptionFailed?: boolean;
   createdAt: any;
   updatedAt: any;
 }

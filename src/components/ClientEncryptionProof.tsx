@@ -41,14 +41,15 @@ export const ClientEncryptionProof: React.FC<ClientEncryptionProofProps> = ({
   currentPassphrase = '',
   onPassphraseChanged
 }) => {
+  const encryptedEntries = entries.filter(e => e.isClientEncrypted && e.encryptedEnvelope);
   const [passphraseInput, setPassphraseInput] = useState(getSessionPassphrase() || currentPassphrase || '');
   const [recoveryPhrase, setRecoveryPhrase] = useState(getStoredRecoveryPhrase() || '');
   const [isCopied, setIsCopied] = useState(false);
   const [showPhrase, setShowPhrase] = useState(false);
-  const [selectedEntryId, setSelectedEntryId] = useState<string>(entries[0]?.id || '');
-  const [demoPlaintext, setDemoPlaintext] = useState<string>('My confidential reflection: Deciding to transition from my corporate engineering role to independent AI research...');
-  const [simulatedCiphertext, setSimulatedCiphertext] = useState<any>(null);
-  const [isEncryptingDemo, setIsEncryptingDemo] = useState(false);
+  const [selectedEntryId, setSelectedEntryId] = useState<string>(encryptedEntries[0]?.id || '');
+  const [decryptedPreview, setDecryptedPreview] = useState<any>(null);
+  const [decryptError, setDecryptError] = useState<string | null>(null);
+  const [isDecrypting, setIsDecrypting] = useState(false);
 
   useEffect(() => {
     if (!recoveryPhrase) {
@@ -58,43 +59,47 @@ export const ClientEncryptionProof: React.FC<ClientEncryptionProofProps> = ({
     }
   }, []);
 
+  useEffect(() => {
+    if (!selectedEntryId && encryptedEntries.length > 0) {
+      setSelectedEntryId(encryptedEntries[0].id);
+    }
+  }, [entries]);
+
+  const selectedEntry = encryptedEntries.find(e => e.id === selectedEntryId);
+
   const handleSavePassphrase = () => {
     if (!passphraseInput.trim()) {
       alert('Please enter a secure client passphrase.');
       return;
     }
-    setSessionPassphrase(passphraseInput, true);
+    setSessionPassphrase(passphraseInput);
     if (onPassphraseChanged) onPassphraseChanged(passphraseInput);
-    runLiveDemo(passphraseInput);
   };
 
-  const runLiveDemo = async (pass = passphraseInput) => {
-    if (!pass) return;
-    setIsEncryptingDemo(true);
+  // Decrypts the actually-selected entry's real ciphertext envelope with whatever
+  // secret is typed in -- the passphrase or the 12-word recovery phrase both work.
+  const runDecryptPreview = async (secret: string) => {
+    if (!secret || !selectedEntry?.encryptedEnvelope) {
+      setDecryptedPreview(null);
+      setDecryptError(null);
+      return;
+    }
+    setIsDecrypting(true);
+    setDecryptError(null);
     try {
-      const payloadToEncrypt = {
-        title: 'Confidential Decision Reflection',
-        body: demoPlaintext,
-        spatialGrounding: 'Kyoto Bamboo Sanctuary',
-        insights: ['High-agency bets yield asymmetric career returns.'],
-        timestamp: Date.now()
-      };
-      const envelope = await encryptClientSide(payloadToEncrypt, pass);
-      setSimulatedCiphertext(envelope);
-    } catch (e) {
-      console.error(e);
+      const decrypted = await decryptClientSide(selectedEntry.encryptedEnvelope as any, secret);
+      setDecryptedPreview(decrypted);
+    } catch (e: any) {
+      setDecryptedPreview(null);
+      setDecryptError(e?.message || 'Decryption failed.');
     } finally {
-      setIsEncryptingDemo(false);
+      setIsDecrypting(false);
     }
   };
 
   useEffect(() => {
-    if (passphraseInput) {
-      runLiveDemo(passphraseInput);
-    }
-  }, [selectedEntryId]);
-
-  const selectedEntry = entries.find(e => e.id === selectedEntryId);
+    runDecryptPreview(passphraseInput);
+  }, [selectedEntryId, passphraseInput]);
 
   return (
     <div className="space-y-6">
@@ -204,92 +209,77 @@ export const ClientEncryptionProof: React.FC<ClientEncryptionProofProps> = ({
               Live Cryptographic Proof Panel
             </h3>
             <p className="text-xs text-slate-500">
-              Side-by-side comparison: Opaque AES-GCM ciphertext document stored in Firestore vs decrypted client view.
+              A real, currently-selected entry: the exact ciphertext envelope stored in Firestore, next to what your passphrase decrypts it to.
             </p>
           </div>
 
-          <button
-            onClick={() => runLiveDemo()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold cursor-pointer"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isEncryptingDemo ? 'animate-spin' : ''}`} />
-            <span>Re-encrypt Test Payload</span>
-          </button>
+          {encryptedEntries.length > 0 && (
+            <select
+              value={selectedEntryId}
+              onChange={(e) => setSelectedEntryId(e.target.value)}
+              className="px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold cursor-pointer"
+            >
+              {encryptedEntries.map(e => (
+                <option key={e.id} value={e.id}>{e.id.slice(0, 12)}… ({new Date(e.updatedAt).toLocaleDateString()})</option>
+              ))}
+            </select>
+          )}
         </div>
 
-        {/* Side-by-Side Proof Comparison */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          
-          {/* Left: Raw Stored Document in Firestore */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5 text-rose-600" />
-                Raw Firestore Document (Stored at Rest)
-              </span>
-              <span className="text-[10px] font-mono text-slate-400">application/json</span>
-            </div>
-
-            <div className="bg-slate-950 text-emerald-400 font-mono text-[11px] p-4 rounded-xl border border-slate-800 overflow-x-auto max-h-[300px] leading-relaxed shadow-inner">
-              <pre>
-{JSON.stringify(
-  simulatedCiphertext || {
-    v: 1,
-    iv: "4f8a91c2e71b",
-    salt: "90da72e18fa4c3b2",
-    ct: "7vQk+8L3dM2YpNxT1wGvL9Zq2pKm...",
-    tagLength: 128,
-    metadata: {
-      userId: user.uid,
-      createdAt: 1771980000000,
-      geohash5: "tf0kx"
-    }
-  },
-  null,
-  2
-)}
-              </pre>
-            </div>
-            <p className="text-[11px] text-slate-500 italic">
-              * Notice: The Firestore collection document holds no human-readable reflection text, keywords, or AI summaries.
-            </p>
+        {encryptedEntries.length === 0 ? (
+          <div className="text-center py-8 text-sm text-slate-500">
+            No encrypted entries yet. Set a passphrase above, then save a reflection in the Studio tab — it will appear here as real ciphertext.
           </div>
+        ) : (
+          <>
+            {/* Side-by-Side Proof Comparison */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-          {/* Right: Decrypted In-Memory Browser View */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                <Unlock className="w-3.5 h-3.5 text-emerald-600" />
-                Decrypted In-Memory Representation (Client-Only)
-              </span>
-              <span className="text-[10px] font-mono text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-bold">
-                Decrypted via WebCrypto
-              </span>
+              {/* Left: Raw Stored Document in Firestore */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-rose-600" />
+                    Raw Firestore Document (Stored at Rest)
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">application/json</span>
+                </div>
+
+                <div className="bg-slate-950 text-emerald-400 font-mono text-[11px] p-4 rounded-xl border border-slate-800 overflow-x-auto max-h-[300px] leading-relaxed shadow-inner">
+                  <pre>{JSON.stringify(selectedEntry?.encryptedEnvelope || {}, null, 2)}</pre>
+                </div>
+                <p className="text-[11px] text-slate-500 italic">
+                  * This is the actual document written to Firestore for this entry — the title, summary, messages, insights, and action items were replaced with this ciphertext envelope before the write.
+                </p>
+              </div>
+
+              {/* Right: Decrypted In-Memory Browser View */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+                    Decrypted In-Memory Representation (Client-Only)
+                  </span>
+                  <span className="text-[10px] font-mono text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-bold">
+                    {isDecrypting ? 'Decrypting…' : decryptedPreview ? 'Decrypted via WebCrypto' : 'Locked'}
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 text-slate-800 font-mono text-[11px] p-4 rounded-xl border border-slate-200 overflow-x-auto max-h-[300px] leading-relaxed">
+                  {decryptError ? (
+                    <div className="text-rose-600 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 shrink-0" />{decryptError}</div>
+                  ) : (
+                    <pre>{JSON.stringify(decryptedPreview || { status: 'Enter the passphrase or recovery phrase above to decrypt.' }, null, 2)}</pre>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 italic">
+                  * Decrypted exclusively in this browser tab using the passphrase or recovery phrase you type above — never sent anywhere.
+                </p>
+              </div>
+
             </div>
-
-            <div className="bg-slate-50 text-slate-800 font-mono text-[11px] p-4 rounded-xl border border-slate-200 overflow-x-auto max-h-[300px] leading-relaxed">
-              <pre>
-{JSON.stringify(
-  {
-    title: "Confidential Decision Reflection",
-    body: demoPlaintext,
-    spatialGrounding: "Kyoto Bamboo Sanctuary (35.01°N, 135.76°E)",
-    insights: [
-      "High-agency bets yield asymmetric career returns."
-    ],
-    status: "Decrypted & Verified In Browser Memory"
-  },
-  null,
-  2
-)}
-              </pre>
-            </div>
-            <p className="text-[11px] text-slate-500 italic">
-              * Decrypted exclusively in the local browser thread with your passphrase.
-            </p>
-          </div>
-
-        </div>
+          </>
+        )}
       </div>
 
     </div>

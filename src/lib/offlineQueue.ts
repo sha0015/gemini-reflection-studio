@@ -80,20 +80,22 @@ export async function flushOfflineQueue(currentUserId: string): Promise<number> 
   return successCount;
 }
 
+export const PASSPHRASE_CHANGED_EVENT = 'gemini_reflection_passphrase_changed';
+
+// Deliberately session-only: the passphrase is a secret, not a preference, so it must
+// not survive a browser restart or be readable by anything outside this tab's session.
 export function getSessionPassphrase(): string | null {
-  return sessionStorage.getItem(ENCRYPTION_PASSPHRASE_KEY) || localStorage.getItem(ENCRYPTION_PASSPHRASE_KEY);
+  return sessionStorage.getItem(ENCRYPTION_PASSPHRASE_KEY);
 }
 
-export function setSessionPassphrase(passphrase: string, persistToLocal = false): void {
+export function setSessionPassphrase(passphrase: string): void {
   sessionStorage.setItem(ENCRYPTION_PASSPHRASE_KEY, passphrase);
-  if (persistToLocal) {
-    localStorage.setItem(ENCRYPTION_PASSPHRASE_KEY, passphrase);
-  }
+  window.dispatchEvent(new CustomEvent(PASSPHRASE_CHANGED_EVENT));
 }
 
 export function clearSessionPassphrase(): void {
   sessionStorage.removeItem(ENCRYPTION_PASSPHRASE_KEY);
-  localStorage.removeItem(ENCRYPTION_PASSPHRASE_KEY);
+  window.dispatchEvent(new CustomEvent(PASSPHRASE_CHANGED_EVENT));
 }
 
 export function getStoredRecoveryPhrase(): string | null {

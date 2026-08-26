@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   auth, 
   db, 
@@ -25,7 +25,8 @@ import { ClientEncryptionProof } from './components/ClientEncryptionProof';
 import { HealthDiagnosticsModal } from './components/HealthDiagnosticsModal';
 import { JournalEntry } from './types';
 import { Sparkles, Shield, Database, Lock, HeartPulse } from 'lucide-react';
-import { flushOfflineQueue } from './lib/offlineQueue';
+import { flushOfflineQueue, getSessionPassphrase, PASSPHRASE_CHANGED_EVENT } from './lib/offlineQueue';
+import { decryptClientSide } from './lib/cryptoVault';
 
 export default function App() {
   const [user, setUser] = useState<any | null>(null);
@@ -63,6 +64,56 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Holds the most recent raw Firestore docs so entries can be re-decrypted locally
+  // (without a fresh network round-trip) whenever the session passphrase changes.
+  const lastEntryDocsRef = useRef<any[]>([]);
+
+  const buildEntriesFromDocs = useCallback(async (docs: any[]): Promise<JournalEntry[]> => {
+    const passphrase = getSessionPassphrase();
+
+    return Promise.all(docs.map(async (docSnap): Promise<JournalEntry> => {
+      const data = docSnap.data();
+      const base: JournalEntry = {
+        id: docSnap.id,
+        userId: data.userId || user.uid,
+        title: data.title || 'Untitled Reflection',
+        category: data.category || 'reflection',
+        mode: data.mode || 'reflect',
+        tags: data.tags || [],
+        summary: data.summary || '',
+        sentiment: data.sentiment || 'Reflective',
+        keyInsights: data.keyInsights || [],
+        actionItems: data.actionItems || [],
+        actionItemsStructured: data.actionItemsStructured || [],
+        messages: data.messages || [],
+        spatialContext: data.spatialContext,
+        isFavorite: data.isFavorite || false,
+        wordCount: data.wordCount || 0,
+        privacyShieldUsed: data.privacyShieldUsed,
+        isClientEncrypted: data.isClientEncrypted,
+        encryptedEnvelope: data.encryptedEnvelope,
+        createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now()),
+        updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : (data.updatedAt || Date.now())
+      };
+
+      if (!data.isClientEncrypted || !data.encryptedEnvelope) {
+        return base;
+      }
+
+      if (!passphrase) {
+        return { ...base, title: '🔒 Locked Entry', summary: 'Enter your passphrase or recovery phrase to unlock.', needsPassphrase: true };
+      }
+
+      try {
+        const decrypted = await decryptClientSide<any>(data.encryptedEnvelope, passphrase);
+        return { ...base, ...decrypted, needsPassphrase: false };
+      } catch (decErr) {
+        console.warn('[Crypto] Failed to decrypt entry', docSnap.id, decErr);
+        return { ...base, title: '🔒 Locked Entry', summary: 'Incorrect passphrase for this entry.', needsPassphrase: true, decryptionFailed: true };
+      }
+    }));
+  }, [user]);
+
   // Listen to Firestore entries for live sync or Local Sandbox for Guest users
   useEffect(() => {
     if (!user) {
@@ -92,43 +143,30 @@ export default function App() {
     try {
       const entriesRef = collection(db, 'users', user.uid, 'entries');
       const q = query(entriesRef, orderBy('createdAt', 'desc'));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const list: JournalEntry[] = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          list.push({
-            id: docSnap.id,
-            userId: data.userId || user.uid,
-            title: data.title || 'Untitled Reflection',
-            category: data.category || 'reflection',
-            mode: data.mode || 'reflect',
-            tags: data.tags || [],
-            summary: data.summary || '',
-            sentiment: data.sentiment || 'Reflective',
-            keyInsights: data.keyInsights || [],
-            actionItems: data.actionItems || [],
-            actionItemsStructured: data.actionItemsStructured || [],
-            messages: data.messages || [],
-            spatialContext: data.spatialContext,
-            isFavorite: data.isFavorite || false,
-            wordCount: data.wordCount || 0,
-            privacyShieldUsed: data.privacyShieldUsed,
-            isClientEncrypted: data.isClientEncrypted,
-            encryptedEnvelope: data.encryptedEnvelope,
-            createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now()),
-            updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : (data.updatedAt || Date.now())
-          });
-        });
-        setEntries(list);
+      const unsubscribe = onSnapshot(q, async (snapshot) => {
+        lastEntryDocsRef.current = snapshot.docs;
+        setEntries(await buildEntriesFromDocs(snapshot.docs));
       }, (error) => {
         console.warn('Firestore snapshot subscription notice:', error);
       });
 
-      return () => unsubscribe();
+      // Re-decrypt the already-loaded entries when the passphrase is set/cleared,
+      // e.g. after the user unlocks their vault from the Encryption Proof tab.
+      const handlePassphraseChange = async () => {
+        if (lastEntryDocsRef.current.length > 0) {
+          setEntries(await buildEntriesFromDocs(lastEntryDocsRef.current));
+        }
+      };
+      window.addEventListener(PASSPHRASE_CHANGED_EVENT, handlePassphraseChange);
+
+      return () => {
+        unsubscribe();
+        window.removeEventListener(PASSPHRASE_CHANGED_EVENT, handlePassphraseChange);
+      };
     } catch (e) {
       console.error(e);
     }
-  }, [user]);
+  }, [user, buildEntriesFromDocs]);
 
   const handleSelectEntry = (entry: JournalEntry) => {
     setActiveEntry(entry);

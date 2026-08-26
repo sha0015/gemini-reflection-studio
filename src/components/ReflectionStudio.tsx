@@ -64,8 +64,8 @@ import {
   ActionItem
 } from '../types';
 import { DistressBanner } from './DistressBanner';
-import { encryptClientSide } from '../lib/cryptoVault';
-import { getSessionPassphrase, queueOfflineEntry } from '../lib/offlineQueue';
+import { encryptClientSide, generateRecoveryPhrase } from '../lib/cryptoVault';
+import { getSessionPassphrase, getStoredRecoveryPhrase, setStoredRecoveryPhrase, queueOfflineEntry } from '../lib/offlineQueue';
 
 interface ReflectionStudioProps {
   user: User;
@@ -527,7 +527,8 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
         return;
       }
 
-      // If a client-side encryption passphrase exists in session, encrypt payload into opaque ciphertext
+      // If a client-side encryption passphrase exists in session, replace the human-readable
+      // fields with an opaque ciphertext envelope before anything reaches Firestore.
       const activePass = getSessionPassphrase();
       let payloadForFirestore: any = {
         ...entryToSave,
@@ -536,17 +537,43 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
 
       if (activePass) {
         try {
+          // A recovery phrase must exist so entries stay recoverable even if the
+          // passphrase is lost -- generate and persist one now if none exists yet.
+          let recoveryPhrase = getStoredRecoveryPhrase();
+          if (!recoveryPhrase) {
+            recoveryPhrase = generateRecoveryPhrase();
+            setStoredRecoveryPhrase(recoveryPhrase);
+          }
+
           const sensitiveBody = {
             title: entryToSave.title,
             summary: entryToSave.summary,
             messages: entryToSave.messages,
             keyInsights: entryToSave.keyInsights,
             actionItems: entryToSave.actionItems,
+            actionItemsStructured: entryToSave.actionItemsStructured,
+            sentiment: entryToSave.sentiment,
+            tags: entryToSave.tags,
             spatialContext: entryToSave.spatialContext
           };
-          const encryptedEnvelope = await encryptClientSide(sensitiveBody, activePass);
-          payloadForFirestore.encryptedEnvelope = encryptedEnvelope;
-          payloadForFirestore.isClientEncrypted = true;
+          const encryptedEnvelope = await encryptClientSide(sensitiveBody, activePass, recoveryPhrase);
+
+          // Sensitive fields are replaced with locked placeholders -- Firestore only
+          // ever sees the ciphertext envelope, never the plaintext reflection.
+          payloadForFirestore = {
+            ...payloadForFirestore,
+            title: '🔒 Encrypted Entry',
+            summary: '',
+            messages: [],
+            keyInsights: [],
+            actionItems: [],
+            actionItemsStructured: [],
+            sentiment: 'Encrypted',
+            tags: [],
+            spatialContext: null,
+            encryptedEnvelope,
+            isClientEncrypted: true
+          };
         } catch (encErr) {
           console.warn('Client encryption warning:', encErr);
         }
@@ -833,6 +860,32 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
   };
+
+  // This entry's content is encrypted and couldn't be decrypted with the current
+  // session passphrase. Refuse to open the editor: its state hydrates directly from
+  // activeEntry's (placeholder) fields, and saving would silently overwrite the real
+  // ciphertext with blank content.
+  if (activeEntry?.needsPassphrase) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center space-y-3 shadow-xs">
+        <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 mx-auto">
+          <Lock className="w-6 h-6" />
+        </div>
+        <h3 className="text-sm font-bold text-slate-900">This entry is locked</h3>
+        <p className="text-xs text-slate-500 max-w-sm mx-auto">
+          {activeEntry.decryptionFailed
+            ? "The passphrase in this session doesn't match this entry's encryption key."
+            : 'Enter your passphrase or recovery phrase in the Encryption Proof tab to unlock it, then come back here.'}
+        </p>
+        <button
+          onClick={() => onNewEntry?.()}
+          className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 cursor-pointer"
+        >
+          Start a new entry instead
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
