@@ -3,8 +3,85 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import dns from 'dns/promises';
+import net from 'net';
 
 dotenv.config();
+
+// SSRF guard: rejects webhook targets that resolve to private/reserved/loopback
+// or cloud-metadata addresses before the server makes any outbound request to them.
+function isPrivateOrReservedIP(ip: string): boolean {
+  const type = net.isIP(ip);
+  if (type === 4) {
+    const [a, b] = ip.split('.').map(Number);
+    if (a === 10 || a === 127 || a === 0) return true;
+    if (a === 169 && b === 254) return true; // link-local incl. cloud metadata (169.254.169.254)
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT
+    if (a >= 224) return true; // multicast / reserved
+    return false;
+  }
+  if (type === 6) {
+    const lower = ip.toLowerCase();
+    if (lower === '::1' || lower === '::') return true;
+    if (lower.startsWith('::ffff:')) {
+      const embedded = lower.slice('::ffff:'.length);
+      if (net.isIP(embedded) === 4) return isPrivateOrReservedIP(embedded);
+    }
+    if (/^fe[89ab]/.test(lower)) return true; // link-local fe80::/10
+    if (/^f[cd]/.test(lower)) return true; // unique local fc00::/7
+    return false;
+  }
+  return true; // couldn't classify -> block
+}
+
+async function assertSafeWebhookUrl(rawUrl: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error('Invalid webhook URL.');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Only HTTPS webhook URLs are permitted.');
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === 'localhost' || hostname.endsWith('.local') || hostname.endsWith('.internal')) {
+    throw new Error('This webhook host is not permitted.');
+  }
+  if (net.isIP(hostname)) {
+    if (isPrivateOrReservedIP(hostname)) {
+      throw new Error('Webhook URL resolves to a private or reserved address.');
+    }
+    return;
+  }
+  let addresses: string[];
+  try {
+    addresses = (await dns.lookup(hostname, { all: true })).map(r => r.address);
+  } catch {
+    throw new Error('Unable to resolve webhook host.');
+  }
+  if (addresses.length === 0 || addresses.some(isPrivateOrReservedIP)) {
+    throw new Error('Webhook URL resolves to a private or reserved address.');
+  }
+}
+
+// Caller must have already validated the URL with assertSafeWebhookUrl.
+async function postToWebhook(rawUrl: string, payload: unknown): Promise<globalThis.Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    return await fetch(rawUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // Standard Resilient Fallback Ladder
 const MODEL_FALLBACK_LADDER = [
@@ -896,6 +973,12 @@ Synthesize high-order longitudinal patterns:
         return res.status(400).json({ error: 'Valid webhookUrl is required.' });
       }
 
+      try {
+        await assertSafeWebhookUrl(webhookUrl);
+      } catch (validationErr: any) {
+        return res.status(400).json({ error: validationErr.message });
+      }
+
       const isSlack = webhookUrl.includes('hooks.slack.com');
       const isDiscord = webhookUrl.includes('discord.com/api/webhooks');
 
@@ -942,11 +1025,7 @@ Synthesize high-order longitudinal patterns:
         };
       }
 
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(pingPayload)
-      });
+      const response = await postToWebhook(webhookUrl, pingPayload);
 
       if (!response.ok) {
         return res.status(response.status).json({
@@ -973,6 +1052,12 @@ Synthesize high-order longitudinal patterns:
 
       if (!webhookUrl || typeof webhookUrl !== 'string') {
         return res.status(400).json({ error: 'Valid webhookUrl is required.' });
+      }
+
+      try {
+        await assertSafeWebhookUrl(webhookUrl);
+      } catch (validationErr: any) {
+        return res.status(400).json({ error: validationErr.message });
       }
 
       // Check if it's Slack or Discord or standard JSON
@@ -1084,16 +1169,12 @@ Synthesize high-order longitudinal patterns:
         };
       }
 
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      const response = await postToWebhook(webhookUrl, payload);
 
       if (!response.ok) {
-        return res.status(response.status).json({ 
+        return res.status(response.status).json({
           error: `Webhook server responded with status ${response.status}`,
-          statusText: response.statusText 
+          statusText: response.statusText
         });
       }
 
