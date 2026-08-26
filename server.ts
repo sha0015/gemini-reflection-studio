@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
@@ -79,6 +80,56 @@ async function postToWebhook(rawUrl: string, payload: unknown): Promise<globalTh
       body: JSON.stringify(payload),
       signal: controller.signal
     });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Reads the deployed Firebase project's identifiers so the health check can probe the
+// actual configured Firestore database rather than reporting a hardcoded status.
+function getFirebaseProjectConfig(): { projectId: string; firestoreDatabaseId: string } | null {
+  try {
+    const raw = fs.readFileSync(path.join(process.cwd(), 'firebase-applet-config.json'), 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!parsed.projectId) return null;
+    return { projectId: parsed.projectId, firestoreDatabaseId: parsed.firestoreDatabaseId || '(default)' };
+  } catch {
+    return null;
+  }
+}
+
+// Server holds no Firestore client of its own (all Firestore access is client-side,
+// gated by firestore.rules) -- this probes the REST endpoint for the configured
+// project/database. Any HTTP response (even 401/403, since this call is unauthenticated)
+// proves the service and this specific project/database are reachable; only a
+// network-level failure or a 5xx from Google's side counts as down.
+async function checkFirestoreReachable(): Promise<boolean> {
+  const config = getFirebaseProjectConfig();
+  if (!config) return false;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/databases/${encodeURIComponent(config.firestoreDatabaseId)}/documents`;
+    const res = await fetch(url, { signal: controller.signal });
+    return res.status < 500;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Probes the actual third-party services the spatial/weather endpoint depends on
+// (Open-Meteo) instead of reporting a hardcoded "ok".
+async function checkWeatherServiceReachable(): Promise<{ status: 'ok' | 'fail'; quotaOk: boolean }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=0&longitude=0&current=temperature_2m', { signal: controller.signal });
+    return { status: res.ok ? 'ok' : 'fail', quotaOk: res.status !== 429 };
+  } catch {
+    return { status: 'fail', quotaOk: false };
   } finally {
     clearTimeout(timeout);
   }
@@ -273,17 +324,6 @@ async function startServer() {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Rate limit exceeded for this endpoint. Please wait a few minutes and try again.' }
-  });
-
-  // Health check endpoint
-  app.get('/api/health', (req, res) => {
-    res.json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY),
-      fallbackLadder: MODEL_FALLBACK_LADDER,
-      environment: process.env.NODE_ENV || 'development'
-    });
   });
 
   // Sanitization test endpoint
@@ -833,9 +873,8 @@ Synthesize high-order longitudinal patterns:
     }
   });
 
-  // Pick 06: Dependency Health Route with Latency Telemetry
+  // Dependency Health Route with Latency Telemetry
   app.get('/api/health', async (req: Request, res: Response) => {
-    const startTime = Date.now();
     let geminiStatus: 'ok' | 'fail' = 'fail';
     let geminiLatency = 0;
 
@@ -855,17 +894,25 @@ Synthesize high-order longitudinal patterns:
       geminiStatus = 'fail';
     }
 
+    const [firestoreReachable, weatherService] = await Promise.all([
+      checkFirestoreReachable(),
+      checkWeatherServiceReachable()
+    ]);
+
+    const dependencies = {
+      geminiAi: { status: geminiStatus, latencyMs: geminiLatency, lastChecked: new Date().toISOString() },
+      cloudFirestore: { status: (firestoreReachable ? 'ok' : 'fail') as 'ok' | 'fail', lastChecked: new Date().toISOString() },
+      geolocationAtmosphere: weatherService,
+      webSpeechApi: { supported: true }
+    };
+    const anyDependencyDown = geminiStatus === 'fail' || !firestoreReachable || weatherService.status === 'fail';
+
     res.json({
-      status: geminiStatus === 'ok' ? 'healthy' : 'degraded',
+      status: anyDependencyDown ? 'degraded' : 'healthy',
       timestamp: new Date().toISOString(),
       model: 'gemini-3.7-flash',
       region: process.env.GOOGLE_CLOUD_REGION || 'asia-southeast1',
-      dependencies: {
-        geminiAi: { status: geminiStatus, latencyMs: geminiLatency, lastChecked: new Date().toISOString() },
-        cloudFirestore: { status: 'ok', lastChecked: new Date().toISOString() },
-        geolocationAtmosphere: { status: 'ok', quotaOk: true },
-        webSpeechApi: { supported: true }
-      }
+      dependencies
     });
   });
 
