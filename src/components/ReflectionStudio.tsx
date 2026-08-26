@@ -41,7 +41,12 @@ import {
   Radio,
   ExternalLink,
   Lock,
-  HeartPulse
+  HeartPulse,
+  Search,
+  Wind,
+  Droplets,
+  Thermometer,
+  SendHorizonal
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { User } from 'firebase/auth';
@@ -236,6 +241,9 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     activeEntry?.spatialContext || SPATIAL_PRESETS[0]
   );
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [placeSearchQuery, setPlaceSearchQuery] = useState('');
+  const [isSearchingPlace, setIsSearchingPlace] = useState(false);
+  const [showSpatialModal, setShowSpatialModal] = useState(false);
 
   // Privacy Shield State
   const [privacyShieldEnabled, setPrivacyShieldEnabled] = useState(true);
@@ -258,8 +266,10 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
   // Webhook Modal & Export State
   const [showWebhookModal, setShowWebhookModal] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState('');
+  const [webhookBroadcastType, setWebhookBroadcastType] = useState<'reflection' | 'actions'>('reflection');
   const [webhookStatus, setWebhookStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [webhookMessage, setWebhookMessage] = useState('');
+  const [isPingingWebhook, setIsPingingWebhook] = useState(false);
 
   const [currentEntryId, setCurrentEntryId] = useState<string>(
     activeEntry?.id || `entry_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`
@@ -397,7 +407,26 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     window.speechSynthesis.speak(utterance);
   };
 
-  // Browser Geolocation auto-detection
+  // Live Spatial & Atmospheric Weather Lookup via Coordinates or Place Query
+  const fetchLiveSpatialWeather = async (params: { lat?: number; lng?: number; placeQuery?: string; category?: any }) => {
+    try {
+      const res = await fetch('/api/spatial/weather-and-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      });
+      if (res.ok) {
+        const spatialData: SpatialContext = await res.json();
+        setSpatialContext(spatialData);
+        return spatialData;
+      }
+    } catch (err) {
+      console.warn('Live spatial weather fetch error:', err);
+    }
+    return null;
+  };
+
+  // Browser Geolocation auto-detection + Live Weather Fetch
   const handleDetectCurrentLocation = () => {
     if (!navigator.geolocation) {
       alert('Geolocation is not supported by your browser.');
@@ -405,25 +434,46 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     }
     setIsDetectingLocation(true);
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setIsDetectingLocation(false);
+      async (pos) => {
         const { latitude, longitude } = pos.coords;
-        setSpatialContext({
-          locationName: `Current GPS (${latitude.toFixed(2)}°, ${longitude.toFixed(2)}°)`,
-          coordinates: { lat: latitude, lng: longitude },
-          weatherCondition: 'Local Ambient Weather',
-          temperatureC: 20,
-          atmosphereEmoji: '📍',
-          placeCategory: 'nature'
+        const liveSpatial = await fetchLiveSpatialWeather({
+          lat: latitude,
+          lng: longitude,
+          category: 'nature'
         });
+        setIsDetectingLocation(false);
+        if (!liveSpatial) {
+          setSpatialContext({
+            locationName: `Current GPS (${latitude.toFixed(2)}°, ${longitude.toFixed(2)}°)`,
+            coordinates: { lat: latitude, lng: longitude },
+            weatherCondition: 'Local Ambient Climate',
+            temperatureC: 20,
+            atmosphereEmoji: '📍',
+            placeCategory: 'nature'
+          });
+        }
       },
       (err) => {
         setIsDetectingLocation(false);
         console.warn('Geolocation error:', err.message);
         alert('Could not retrieve GPS coordinates. Using curated retreat preset.');
       },
-      { timeout: 8000 }
+      { timeout: 10000 }
     );
+  };
+
+  // Custom Place / Sanctuary Search + Live Weather Fetch
+  const handleSearchPlaceLocation = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!placeSearchQuery.trim()) return;
+    setIsSearchingPlace(true);
+    try {
+      await fetchLiveSpatialWeather({ placeQuery: placeSearchQuery.trim() });
+      setShowSpatialModal(false);
+      setPlaceSearchQuery('');
+    } finally {
+      setIsSearchingPlace(false);
+    }
   };
 
   // Save current entry state to Cloud Firestore (User Isolated + Client-Side Encrypted)
@@ -696,9 +746,34 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handleTestPingWebhook = async () => {
+    if (!webhookUrl.trim()) return;
+    setIsPingingWebhook(true);
+    setWebhookMessage('');
+    try {
+      const response = await fetch('/api/webhooks/test-ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhookUrl: webhookUrl.trim() })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Webhook ping failed');
+      }
+      setWebhookStatus('success');
+      setWebhookMessage(`✅ Verification Ping Successful! Connected to ${data.platform || 'Webhook'}.`);
+    } catch (err: any) {
+      setWebhookStatus('error');
+      setWebhookMessage(`❌ Verification Failed: ${err.message || 'Could not connect'}`);
+    } finally {
+      setIsPingingWebhook(false);
+    }
+  };
+
   const handleDispatchWebhook = async () => {
     if (!webhookUrl.trim()) return;
     setWebhookStatus('sending');
+    setWebhookMessage('');
     try {
       const response = await fetch('/api/export/webhook', {
         method: 'POST',
@@ -709,21 +784,24 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
           summary,
           keyInsights,
           actionItems,
-          sentiment
+          sentiment,
+          spatialContext,
+          broadcastType: webhookBroadcastType
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Webhook error: ${response.statusText}`);
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Webhook error: ${response.statusText}`);
       }
 
       const res = await response.json();
       setWebhookStatus('success');
-      setWebhookMessage('Successfully dispatched payload to endpoint!');
+      setWebhookMessage(`✅ Successfully dispatched ${webhookBroadcastType === 'actions' ? 'action commitments' : 'reflection digest'} to ${res.platform || 'Webhook'}!`);
       setTimeout(() => {
         setShowWebhookModal(false);
         setWebhookStatus('idle');
-      }, 2000);
+      }, 2500);
     } catch (err: any) {
       setWebhookStatus('error');
       setWebhookMessage(err.message || 'Failed to dispatch webhook');
@@ -833,8 +911,8 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
 
           {/* Row 3: Spatial Grounding & Privacy Shield Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100 text-xs">
-            {/* Spatial Grounding Presets */}
-            <div className="flex items-center gap-2">
+            {/* Spatial Grounding with Live Meteorological Weather */}
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-slate-500 flex items-center gap-1 font-medium">
                 <MapPin className="w-3.5 h-3.5 text-rose-500" />
                 Spatial Anchor:
@@ -845,7 +923,7 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
                   const found = SPATIAL_PRESETS.find(p => p.locationName === e.target.value);
                   if (found) setSpatialContext(found);
                 }}
-                className="bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1 text-slate-800 text-xs font-semibold cursor-pointer focus:outline-emerald-500"
+                className="bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1 text-slate-800 text-xs font-semibold cursor-pointer focus:outline-emerald-500 max-w-[200px] truncate"
               >
                 {SPATIAL_PRESETS.map((p) => (
                   <option key={p.locationName} value={p.locationName}>
@@ -853,14 +931,33 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
                   </option>
                 ))}
               </select>
+
+              {/* Live Weather Badge */}
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200/80 text-emerald-900 font-medium text-[11px]" title={`Atmosphere: ${spatialContext.weatherCondition || 'Calm'}`}>
+                <span>{spatialContext.atmosphereEmoji || '🌤️'}</span>
+                <span className="font-bold">{spatialContext.temperatureC ?? 20}°C</span>
+                <span className="text-emerald-700 hidden sm:inline">• {spatialContext.weatherCondition || 'Clear'}</span>
+              </div>
+
+              {/* GPS Detection */}
               <button
                 onClick={handleDetectCurrentLocation}
                 disabled={isDetectingLocation}
-                className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer text-[11px] flex items-center gap-1 px-2"
-                title="Detect GPS location"
+                className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer text-[11px] flex items-center gap-1 px-2 transition-colors"
+                title="Detect GPS & Fetch Live Meteorological Data"
               >
                 <Compass className={`w-3.5 h-3.5 ${isDetectingLocation ? 'animate-spin text-emerald-600' : 'text-slate-500'}`} />
-                <span>{isDetectingLocation ? 'Detecting...' : 'Detect GPS'}</span>
+                <span>{isDetectingLocation ? 'Locating...' : 'Live GPS'}</span>
+              </button>
+
+              {/* Custom Place Search Button */}
+              <button
+                onClick={() => setShowSpatialModal(true)}
+                className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer text-[11px] flex items-center gap-1 px-2 transition-colors"
+                title="Search any city or custom retreat"
+              >
+                <Search className="w-3.5 h-3.5 text-slate-500" />
+                <span>Search City</span>
               </button>
             </div>
 
@@ -1262,15 +1359,84 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
         )}
       </div>
 
-      {/* Webhook Modal */}
-      {showWebhookModal && (
+      {/* Spatial Grounding Search Modal */}
+      {showSpatialModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4 border border-slate-200">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Share2 className="w-4 h-4 text-emerald-600" />
-                Dispatch Reflection to Webhook
+                <MapPin className="w-4 h-4 text-rose-500" />
+                Spatial Atmosphere Grounding
               </h3>
+              <button
+                onClick={() => setShowSpatialModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Search any city, neighborhood, or sanctuary. We will geocode your anchor and fetch real-time atmospheric weather metrics (temperature, humidity, sky condition) to contextually ground Gemini 3.7's reflection.
+            </p>
+
+            <form onSubmit={handleSearchPlaceLocation} className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-700">City, Place, or Sanctuary</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="e.g. Kyoto Japan, Reykjavik Iceland, Lake Tahoe..."
+                    value={placeSearchQuery}
+                    onChange={(e) => setPlaceSearchQuery(e.target.value)}
+                    className="flex-1 text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-emerald-500"
+                    autoFocus
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSearchingPlace || !placeSearchQuery.trim()}
+                    className="px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                  >
+                    {isSearchingPlace ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                    <span>Search</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+
+            <div className="pt-2 border-t border-slate-100">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Curated Sanctuaries</span>
+              <div className="flex flex-wrap gap-1.5">
+                {SPATIAL_PRESETS.map((p) => (
+                  <button
+                    key={p.locationName}
+                    onClick={() => {
+                      setSpatialContext(p);
+                      setShowSpatialModal(false);
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 cursor-pointer flex items-center gap-1"
+                  >
+                    <span>{p.atmosphereEmoji}</span>
+                    <span>{p.locationName.split(',')[0]}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Webhook Modal */}
+      {showWebhookModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4 border border-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Share2 className="w-4 h-4 text-emerald-600" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Outbound Webhook Dispatcher
+                </h3>
+              </div>
               <button
                 onClick={() => setShowWebhookModal(false)}
                 className="text-slate-400 hover:text-slate-600 text-sm font-bold cursor-pointer"
@@ -1280,11 +1446,42 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed">
-              Enter your Slack Incoming Webhook, Discord Webhook, or Zapier endpoint. We will format and dispatch your structured summary and action items instantly.
+              Dispatch your sanitized reflection summary, sentiment, and action commitments directly to team channels in Slack, Discord, or automated webhook endpoints.
             </p>
 
+            {/* Platform Identification Badge */}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-slate-500">Destination:</span>
+              {webhookUrl.includes('hooks.slack.com') ? (
+                <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[11px] font-bold">
+                  🟢 Slack Incoming Webhook (Block Kit Formatted)
+                </span>
+              ) : webhookUrl.includes('discord.com/api/webhooks') ? (
+                <span className="px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800 text-[11px] font-bold">
+                  🟣 Discord Webhook (Rich Embed Formatted)
+                </span>
+              ) : webhookUrl ? (
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-bold">
+                  🌐 Standard JSON Webhook Payload
+                </span>
+              ) : (
+                <span className="text-[11px] text-slate-400">Enter URL below</span>
+              )}
+            </div>
+
+            {/* Webhook URL Input */}
             <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-700">Webhook URL</label>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold text-slate-700">Webhook URL</label>
+                <button
+                  onClick={handleTestPingWebhook}
+                  disabled={!webhookUrl.trim() || isPingingWebhook}
+                  className="text-[11px] text-blue-600 hover:text-blue-700 font-bold disabled:opacity-40 cursor-pointer flex items-center gap-1"
+                >
+                  {isPingingWebhook ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                  <span>Send Test Ping</span>
+                </button>
+              </div>
               <input
                 type="url"
                 placeholder="https://hooks.slack.com/services/... or https://discord.com/api/webhooks/..."
@@ -1294,15 +1491,47 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
               />
             </div>
 
+            {/* Broadcast Mode Selection */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-700">Broadcast Content</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setWebhookBroadcastType('reflection')}
+                  className={`p-2.5 rounded-xl text-left border cursor-pointer transition-all ${
+                    webhookBroadcastType === 'reflection'
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-950 font-bold'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 text-xs'
+                  }`}
+                >
+                  <div className="text-xs">🪞 Full Reflection</div>
+                  <div className="text-[10px] text-slate-500 font-normal">Summary, insights & action items</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setWebhookBroadcastType('actions')}
+                  className={`p-2.5 rounded-xl text-left border cursor-pointer transition-all ${
+                    webhookBroadcastType === 'actions'
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-950 font-bold'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 text-xs'
+                  }`}
+                >
+                  <div className="text-xs">⚡ Action Items Only</div>
+                  <div className="text-[10px] text-slate-500 font-normal">Team commitment checklist</div>
+                </button>
+              </div>
+            </div>
+
             {webhookMessage && (
-              <div className={`p-2.5 rounded-xl text-xs ${
-                webhookStatus === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
+              <div className={`p-2.5 rounded-xl text-xs leading-relaxed ${
+                webhookStatus === 'success' ? 'bg-emerald-50 text-emerald-900 border border-emerald-200' : 'bg-rose-50 text-rose-900 border border-rose-200'
               }`}>
                 {webhookMessage}
               </div>
             )}
 
-            <div className="flex items-center justify-end gap-2 pt-2">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
                 onClick={() => setShowWebhookModal(false)}
                 className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
@@ -1312,9 +1541,19 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
               <button
                 onClick={handleDispatchWebhook}
                 disabled={webhookStatus === 'sending' || !webhookUrl}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50 cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
               >
-                {webhookStatus === 'sending' ? 'Dispatching...' : 'Send Payload'}
+                {webhookStatus === 'sending' ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Dispatching...</span>
+                  </>
+                ) : (
+                  <>
+                    <SendHorizonal className="w-3.5 h-3.5" />
+                    <span>Dispatch Payload</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

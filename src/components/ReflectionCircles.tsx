@@ -14,7 +14,9 @@ import {
   RefreshCw,
   ExternalLink,
   Copy,
-  Info
+  Info,
+  Zap,
+  SendHorizonal
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { db, doc, setDoc, collection, addDoc, serverTimestamp } from '../lib/firebase';
@@ -39,6 +41,12 @@ export const ReflectionCircles: React.FC<ReflectionCirclesProps> = ({
   const [redactionDraft, setRedactionDraft] = useState<RedactedShareDraft | null>(null);
   const [shareSuccess, setShareSuccess] = useState<string | null>(null);
   const [isSubmittingShare, setIsSubmittingShare] = useState(false);
+
+  // Webhook Integration State
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [webhookStatus, setWebhookStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
+  const [webhookMsg, setWebhookMsg] = useState('');
+  const [isTestingWebhook, setIsTestingWebhook] = useState(false);
 
   const selectedEntry = entries.find(e => e.id === selectedEntryId);
 
@@ -66,6 +74,57 @@ export const ReflectionCircles: React.FC<ReflectionCirclesProps> = ({
       console.error('Redaction generation error:', err);
     } finally {
       setIsRedacting(false);
+    }
+  };
+
+  const handleTestWebhook = async () => {
+    if (!webhookUrl.trim()) return;
+    setIsTestingWebhook(true);
+    setWebhookMsg('');
+    try {
+      const res = await fetch('/api/webhooks/test-ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhookUrl: webhookUrl.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Webhook test failed');
+      setWebhookStatus('success');
+      setWebhookMsg(`✅ Webhook verified! Connected to ${data.platform || 'Target'}.`);
+    } catch (err: any) {
+      setWebhookStatus('error');
+      setWebhookMsg(`❌ Connection failed: ${err.message}`);
+    } finally {
+      setIsTestingWebhook(false);
+    }
+  };
+
+  const handleBroadcastWebhook = async () => {
+    if (!webhookUrl.trim() || !selectedEntry) return;
+    setWebhookStatus('sending');
+    setWebhookMsg('');
+    try {
+      const res = await fetch('/api/export/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookUrl: webhookUrl.trim(),
+          entryTitle: redactionDraft ? redactionDraft.proposedTitle : selectedEntry.title,
+          summary: redactionDraft ? redactionDraft.summary : selectedEntry.summary,
+          keyInsights: selectedEntry.keyInsights,
+          actionItems: selectedEntry.actionItems,
+          sentiment: selectedEntry.sentiment,
+          spatialContext: selectedEntry.spatialContext,
+          broadcastType: 'reflection'
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Webhook dispatch failed');
+      setWebhookStatus('success');
+      setWebhookMsg(`✅ Successfully broadcast to ${data.platform || 'Webhook channel'}!`);
+    } catch (err: any) {
+      setWebhookStatus('error');
+      setWebhookMsg(`❌ Dispatch failed: ${err.message}`);
     }
   };
 

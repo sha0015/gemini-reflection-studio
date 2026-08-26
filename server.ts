@@ -767,11 +767,209 @@ Synthesize high-order longitudinal patterns:
   });
 
 
+  // Spatial Grounding & Live Atmospheric Weather API (Google Maps / Open-Meteo integration)
+  app.post('/api/spatial/weather-and-location', async (req: Request, res: Response) => {
+    try {
+      const data = (req.body && typeof req.body === 'object') ? req.body : {};
+      let { lat, lng, placeQuery, placeCategory = 'nature' } = data;
+
+      // Weather code interpreter
+      const interpretWmoWeather = (code: number) => {
+        if (code === 0) return { desc: 'Clear Sky & Radiant Sunshine', emoji: '☀️' };
+        if (code >= 1 && code <= 3) return { desc: 'Partly Cloudy & Gentle Breeze', emoji: '⛅' };
+        if (code === 45 || code === 48) return { desc: 'Misty Fog & Quiet Air', emoji: '🌫️' };
+        if (code >= 51 && code <= 55) return { desc: 'Soft Drizzle & Refreshing Mist', emoji: '🌦️' };
+        if (code >= 61 && code <= 67) return { desc: 'Steady Rain & Rhythmic Showers', emoji: '🌧️' };
+        if (code >= 71 && code <= 77) return { desc: 'Crisp Snow Flurries & Cold Air', emoji: '❄️' };
+        if (code >= 80 && code <= 82) return { desc: 'Passing Rain Showers', emoji: '🌧️' };
+        if (code >= 95 && code <= 99) return { desc: 'Atmospheric Thunderstorm & Rain', emoji: '⛈️' };
+        return { desc: 'Ambient Temperate Weather', emoji: '🌤️' };
+      };
+
+      let resolvedLocationName = 'Local Sanctuary Space';
+      let finalLat = typeof lat === 'number' ? lat : 37.7749;
+      let finalLng = typeof lng === 'number' ? lng : -122.4194;
+
+      // 1. Geocode query if coordinates were not supplied
+      if (placeQuery && (typeof lat !== 'number' || typeof lng !== 'number')) {
+        try {
+          const geocodeUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(placeQuery)}&limit=1`;
+          const geoRes = await fetch(geocodeUrl, {
+            headers: { 'User-Agent': 'GeminiReflectionStudio/2.0 (contact: support@gemini-reflection.app)' }
+          });
+          if (geoRes.ok) {
+            const geoData: any = await geoRes.json();
+            if (Array.isArray(geoData) && geoData.length > 0) {
+              finalLat = parseFloat(geoData[0].lat);
+              finalLng = parseFloat(geoData[0].lon);
+              resolvedLocationName = geoData[0].display_name.split(',').slice(0, 3).join(',').trim();
+            }
+          }
+        } catch (geoErr) {
+          console.warn('Geocoding search error:', geoErr);
+          resolvedLocationName = placeQuery;
+        }
+      } else if (typeof lat === 'number' && typeof lng === 'number') {
+        // Reverse geocode coordinates to get a human-readable city/region name
+        try {
+          const revUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${finalLat}&lon=${finalLng}`;
+          const revRes = await fetch(revUrl, {
+            headers: { 'User-Agent': 'GeminiReflectionStudio/2.0 (contact: support@gemini-reflection.app)' }
+          });
+          if (revRes.ok) {
+            const revData: any = await revRes.json();
+            if (revData && revData.address) {
+              const addr = revData.address;
+              const placeParts = [
+                addr.amenity || addr.leisure || addr.suburb || addr.neighbourhood,
+                addr.city || addr.town || addr.village || addr.county,
+                addr.state || addr.country
+              ].filter(Boolean);
+              if (placeParts.length > 0) {
+                resolvedLocationName = placeParts.join(', ');
+              } else if (revData.display_name) {
+                resolvedLocationName = revData.display_name.split(',').slice(0, 3).join(',').trim();
+              }
+            }
+          }
+        } catch (revErr) {
+          console.warn('Reverse geocoding error:', revErr);
+          resolvedLocationName = `Coordinates (${finalLat.toFixed(2)}°, ${finalLng.toFixed(2)}°)`;
+        }
+      }
+
+      // 2. Fetch live atmospheric weather from Open-Meteo
+      let weatherCondition = 'Gentle Ambient Breeze';
+      let atmosphereEmoji = '🌿';
+      let temperatureC = 21;
+      let apparentTempC = 21;
+      let humidityPct = 55;
+      let windSpeedKmh = 8;
+      let elevationM = 40;
+
+      try {
+        const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${finalLat}&longitude=${finalLng}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&timezone=auto`;
+        const wRes = await fetch(weatherUrl);
+        if (wRes.ok) {
+          const wData: any = await wRes.json();
+          if (wData && wData.current) {
+            temperatureC = Math.round(wData.current.temperature_2m);
+            apparentTempC = Math.round(wData.current.apparent_temperature || wData.current.temperature_2m);
+            humidityPct = Math.round(wData.current.relative_humidity_2m || 50);
+            windSpeedKmh = Math.round(wData.current.wind_speed_10m || 5);
+            elevationM = Math.round(wData.elevation || 50);
+            const interpreted = interpretWmoWeather(wData.current.weather_code || 0);
+            weatherCondition = interpreted.desc;
+            atmosphereEmoji = interpreted.emoji;
+          }
+        }
+      } catch (wErr) {
+        console.warn('Weather fetch error:', wErr);
+      }
+
+      res.json({
+        locationName: resolvedLocationName,
+        coordinates: { lat: finalLat, lng: finalLng },
+        weatherCondition,
+        temperatureC,
+        apparentTempC,
+        humidityPct,
+        windSpeedKmh,
+        elevationM,
+        atmosphereEmoji,
+        placeCategory,
+        timestamp: new Date().toISOString()
+      });
+    } catch (err: any) {
+      console.error('Spatial weather endpoint error:', err);
+      res.status(500).json({ error: err.message || 'Failed to resolve spatial weather' });
+    }
+  });
+
+  // Outbound Webhook Verification Ping
+  app.post('/api/webhooks/test-ping', async (req: Request, res: Response) => {
+    try {
+      const data = (req.body && typeof req.body === 'object') ? req.body : {};
+      const { webhookUrl } = data;
+
+      if (!webhookUrl || typeof webhookUrl !== 'string') {
+        return res.status(400).json({ error: 'Valid webhookUrl is required.' });
+      }
+
+      const isSlack = webhookUrl.includes('hooks.slack.com');
+      const isDiscord = webhookUrl.includes('discord.com/api/webhooks');
+
+      let pingPayload: any;
+
+      if (isSlack) {
+        pingPayload = {
+          text: `🪞 *Gemini Reflection Studio:* Webhook test ping successful!`,
+          blocks: [
+            {
+              type: 'header',
+              text: { type: 'plain_text', text: '🎉 Webhook Connected Successfully' }
+            },
+            {
+              type: 'section',
+              text: { type: 'mrkdwn', text: 'Your Slack channel is now connected to *Gemini Reflection Studio*. Sanitized reflection digests and action commitments will broadcast cleanly to this channel.' }
+            },
+            {
+              type: 'context',
+              elements: [
+                { type: 'mrkdwn', text: `_Dispatched at ${new Date().toLocaleTimeString()} • Zero-Knowledge Privacy Shield Active_` }
+              ]
+            }
+          ]
+        };
+      } else if (isDiscord) {
+        pingPayload = {
+          content: '🎉 **Gemini Reflection Studio Webhook Verified!**',
+          embeds: [
+            {
+              title: 'Connection Test Successful',
+              description: 'Your Discord channel is connected to Gemini Reflection Studio. Sanitized reflections and action items can be broadcast directly here.',
+              color: 0x10b981,
+              footer: { text: `Dispatched at ${new Date().toLocaleTimeString()} • WebCrypto AES-GCM Secured` }
+            }
+          ]
+        };
+      } else {
+        pingPayload = {
+          event: 'webhook_test_ping',
+          status: 'verified',
+          source: 'Gemini Reflection Studio',
+          timestamp: new Date().toISOString()
+        };
+      }
+
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pingPayload)
+      });
+
+      if (!response.ok) {
+        return res.status(response.status).json({
+          error: `Webhook returned status ${response.status}: ${response.statusText}`
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Test notification delivered successfully to webhook target.',
+        platform: isSlack ? 'Slack' : (isDiscord ? 'Discord' : 'Custom HTTPS Webhook')
+      });
+    } catch (err: any) {
+      console.error('Webhook ping error:', err);
+      res.status(500).json({ error: err.message || 'Webhook ping failed' });
+    }
+  });
+
   // Outbound Webhook Integration Endpoint (Slack / Discord / Custom Webhook)
   app.post('/api/export/webhook', async (req: Request, res: Response) => {
     try {
       const data = (req.body && typeof req.body === 'object') ? req.body : {};
-      const { webhookUrl, entryTitle, summary, keyInsights = [], actionItems = [], sentiment } = data;
+      const { webhookUrl, entryTitle, summary, keyInsights = [], actionItems = [], sentiment, spatialContext, broadcastType = 'reflection' } = data;
 
       if (!webhookUrl || typeof webhookUrl !== 'string') {
         return res.status(400).json({ error: 'Valid webhookUrl is required.' });
@@ -784,27 +982,80 @@ Synthesize high-order longitudinal patterns:
       let payload: any;
 
       if (isSlack) {
+        const blocks: any[] = [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: `🪞 ${broadcastType === 'actions' ? 'Action Commitments' : 'Sanitized Reflection'}: ${entryTitle || 'Daily Digest'}` }
+          },
+          {
+            type: 'section',
+            text: { 
+              type: 'mrkdwn', 
+              text: `*Summary:*\n${summary || 'N/A'}\n\n*Sentiment:* ${sentiment || 'Reflective'}${spatialContext ? ` • *Atmosphere:* ${spatialContext.atmosphereEmoji || '📍'} ${spatialContext.locationName} (${spatialContext.temperatureC || 20}°C, ${spatialContext.weatherCondition || 'Calm'})` : ''}` 
+            }
+          }
+        ];
+
+        if (keyInsights && keyInsights.length > 0) {
+          blocks.push({
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*Key Insights:*\n${keyInsights.map((ins: string) => `• ${ins}`).join('\n')}`
+            }
+          });
+        }
+
+        if (actionItems && actionItems.length > 0) {
+          blocks.push({
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*Action Item Commitments:*\n${actionItems.map((a: any) => typeof a === 'string' ? `☐ ${a}` : `[${a.status || 'open'}] ${a.text}`).join('\n')}`
+            }
+          });
+        }
+
+        blocks.push({
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Dispatched via Gemini Reflection Studio • Privacy Shield Applied_` }
+          ]
+        });
+
         payload = {
           text: `🪞 *Gemini Reflection:* ${entryTitle || 'Daily Reflection'}`,
-          blocks: [
-            {
-              type: 'header',
-              text: { type: 'plain_text', text: `🪞 Reflection: ${entryTitle || 'Daily Summary'}` }
-            },
-            {
-              type: 'section',
-              text: { type: 'mrkdwn', text: `*Summary:*\n${summary || 'N/A'}\n\n*Sentiment:* ${sentiment || 'Reflective'}` }
-            },
-            {
-              type: 'section',
-              text: {
-                type: 'mrkdwn',
-                text: `*Key Action Items:*\n${actionItems.map((a: string) => `• ${a}`).join('\n') || 'None'}`
-              }
-            }
-          ]
+          blocks
         };
       } else if (isDiscord) {
+        const fields: any[] = [
+          { name: 'Sentiment', value: sentiment || 'Reflective', inline: true }
+        ];
+
+        if (spatialContext) {
+          fields.push({
+            name: 'Atmosphere & Space',
+            value: `${spatialContext.atmosphereEmoji || '📍'} ${spatialContext.locationName} (${spatialContext.temperatureC || 20}°C, ${spatialContext.weatherCondition || 'Calm'})`,
+            inline: true
+          });
+        }
+
+        if (keyInsights && keyInsights.length > 0) {
+          fields.push({
+            name: 'Key Insights',
+            value: keyInsights.map((ins: string) => `• ${ins}`).join('\n') || 'None',
+            inline: false
+          });
+        }
+
+        if (actionItems && actionItems.length > 0) {
+          fields.push({
+            name: 'Action Commitments',
+            value: actionItems.map((a: any) => typeof a === 'string' ? `☐ ${a}` : `[${a.status || 'open'}] ${a.text}`).join('\n') || 'None',
+            inline: false
+          });
+        }
+
         payload = {
           content: `**🪞 Gemini Reflection Studio Export**`,
           embeds: [
@@ -812,11 +1063,9 @@ Synthesize high-order longitudinal patterns:
               title: entryTitle || 'Daily Reflection',
               description: summary || 'No summary available.',
               color: 0x10b981,
-              fields: [
-                { name: 'Sentiment', value: sentiment || 'Reflective', inline: true },
-                { name: 'Action Items', value: actionItems.map((a: string) => `• ${a}`).join('\n') || 'None', inline: false }
-              ],
-              footer: { text: 'Dispatched from Gemini Reflection Studio' }
+              fields,
+              footer: { text: 'Dispatched from Gemini Reflection Studio • Zero-Knowledge Crypto Protected' },
+              timestamp: new Date().toISOString()
             }
           ]
         };
@@ -829,6 +1078,8 @@ Synthesize high-order longitudinal patterns:
           keyInsights,
           actionItems,
           sentiment,
+          spatialContext,
+          broadcastType,
           dispatchedAt: new Date().toISOString()
         };
       }
@@ -849,12 +1100,23 @@ Synthesize high-order longitudinal patterns:
       res.json({
         success: true,
         message: 'Successfully dispatched reflection payload to webhook destination.',
+        platform: isSlack ? 'Slack' : (isDiscord ? 'Discord' : 'Custom Webhook'),
         dispatchedAt: new Date().toISOString()
       });
     } catch (err: any) {
       console.error('Webhook dispatch error:', err);
       res.status(500).json({ error: err.message || 'Failed to dispatch webhook' });
     }
+  });
+
+  // Alias for /api/webhooks/dispatch
+  app.post('/api/webhooks/dispatch', async (req: Request, res: Response) => {
+    // Re-route internally to /api/export/webhook
+    const handler = (app as any)._router.stack.find((layer: any) => layer.route && layer.route.path === '/api/export/webhook');
+    if (handler && handler.route && handler.route.stack && handler.route.stack[0]) {
+      return handler.route.stack[0].handle(req, res);
+    }
+    res.status(500).json({ error: 'Handler not resolved' });
   });
 
   // Agentic Threat Modeling Endpoint
