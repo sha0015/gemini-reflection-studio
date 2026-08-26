@@ -7,13 +7,14 @@ import { ReflectionStudio } from './components/ReflectionStudio';
 import { EntryHistory } from './components/EntryHistory';
 import { InsightsDashboard } from './components/InsightsDashboard';
 import { FirestoreSecurityBadge } from './components/FirestoreSecurityBadge';
+import { BlogViewer } from './components/BlogViewer';
 import { JournalEntry } from './types';
 import { Sparkles, Shield, Database, Lock } from 'lucide-react';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [currentTab, setCurrentTab] = useState<'studio' | 'history' | 'insights' | 'security'>('studio');
+  const [currentTab, setCurrentTab] = useState<'studio' | 'history' | 'insights' | 'security' | 'blog'>('studio');
   const [activeEntry, setActiveEntry] = useState<JournalEntry | null>(null);
 
   // Monitor Firebase Auth state
@@ -142,6 +143,10 @@ export default function App() {
           <FirestoreSecurityBadge
             user={user}
           />
+        )}
+
+        {currentTab === 'blog' && (
+          <BlogViewer />
         )}
       </main>
 

@@ -15,8 +15,8 @@ import { signOutUser } from '../lib/firebase';
 
 interface AppHeaderProps {
   user: User;
-  currentTab: 'studio' | 'history' | 'insights' | 'security';
-  onSelectTab: (tab: 'studio' | 'history' | 'insights' | 'security') => void;
+  currentTab: 'studio' | 'history' | 'insights' | 'security' | 'blog';
+  onSelectTab: (tab: 'studio' | 'history' | 'insights' | 'security' | 'blog') => void;
   onNewEntry: () => void;
 }
 
@@ -115,6 +115,19 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             >
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
               <span className="hidden md:inline">Isolation & Rules</span>
+            </button>
+
+            <button
+              id="tab-blog"
+              onClick={() => onSelectTab('blog')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                currentTab === 'blog'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5 text-amber-600" />
+              <span>Blog & Architecture</span>
             </button>
           </nav>
 
