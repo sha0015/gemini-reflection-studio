@@ -16,6 +16,107 @@ To solve this, we built **Gemini Reflection Studio**—a full-stack, user-authen
 
 ---
 
+## 📸 Step-by-Step Experience & User Flow Walkthrough
+
+Here is the exact step-by-step user journey from authentication to spatial grounding and security rule isolation:
+
+### **Step 1: Google Authentication & Zero-Trust Workspace Setup**
+```
+┌──────────────────────────────────────────────────────────┐
+│  🪞 Gemini Reflection Studio                             │
+│  Zero-Knowledge Isolated AI Companion                    │
+├──────────────────────────────────────────────────────────┤
+│  [ G  Continue with Google                             ] │
+│  [    Explore as Anonymous Guest                       ] │
+│                                                          │
+│  🔒 Isolated Cloud Firestore: /users/{userId}/entries     │
+└──────────────────────────────────────────────────────────┘
+```
+- **Experience:** The user logs in via Google Identity Services (GIS) or instant Guest mode.
+- **Under the Hood:** Firebase Auth generates a cryptographically verified token. Cloud Firestore provisions a user-isolated subcollection at `/users/{uid}/entries` where only that specific `auth.uid` has read/write privileges.
+
+---
+
+### **Step 2: Choosing Thinking Modalities & Stream-of-Consciousness Input**
+```
+┌──────────────────────────────────────────────────────────┐
+│  Select Thinking Modality (Gemini 3.6 Flash Active):     │
+│  [★ Deep Inquire]  [💡 Brainstorm]  [📊 Synthesize]  [✅ Action Items] │
+├──────────────────────────────────────────────────────────┤
+│  Stream of Consciousness:                                │
+│  "I want to scale our engineering architecture while    │
+│   preserving team focus and code isolation..."           │
+│                                           [Send Reflection] │
+└──────────────────────────────────────────────────────────┘
+```
+- **Experience:** The user selects from 4 cognitive modes and types or speaks their raw thoughts.
+- **Under the Hood:** The request is sent to the secure server API gateway (`/api/reflect`), where Gemini 3.6 Flash adapts its reasoning persona and system prompt.
+
+---
+
+### **Step 3: Multi-Turn AI Reasoning & Auto-Synthesized Action Items**
+```
+┌──────────────────────────────────┬──────────────────────────────────┐
+│ ✦ Gemini 3.6 Flash Reflection     │ Auto-Synthesized Action Items    │
+│ "When scaling systems, modular   │ ☑ Formalize Firestore rules test │
+│  separation of concerns serves   │ ☑ Establish 20-min architecture  │
+│  as your cognitive firewall..."  │   synthesis loop                 │
+│                                  │                                  │
+│ Tone: Thoughtful & Pragmatic     │ Executive Summary: Modular focus │
+└──────────────────────────────────┴──────────────────────────────────┘
+```
+- **Experience:** The AI engages in an empathetic dialogue while simultaneously parsing out key takeaways, emotional tone, and an interactive checklist of action items.
+- **Under the Hood:** Handled via structured output schema enforcement in the Google GenAI SDK.
+
+---
+
+### **Step 4: Spatial Grounding with Google Maps Platform**
+```
+┌──────────────────────────────────────────────────────────┐
+│  📍 Spatial Grounding: Kyoto Bamboo Sanctuary            │
+│  Coordinates: 35.01° N, 135.67° E                        │
+│  Weather: Misty & Serene • 18°C • Ambient Zen           │
+├──────────────────────────────────────────────────────────┤
+│  [ Interactive Google Maps Stage with Retreat Pins ]     │
+└──────────────────────────────────────────────────────────┘
+```
+- **Experience:** Users tag physical locations and ambient weather context to their thoughts.
+- **Under the Hood:** Coordinates and meteorological atmospheric data are saved with the entry, allowing Gemini to reflect on the user's environment.
+
+---
+
+### **Step 5: Cloud Firestore History & Markdown Export**
+```
+┌──────────────────────────────────────────────────────────┐
+│  🗂️ Reflection Timeline & Search                         │
+│  Filter by Tone: [All] [Calm] [Pragmatic] [Creative]     │
+├──────────────────────────────────────────────────────────┤
+│  • "Scaling Architecture with Zero-Knowledge Rules"      │
+│    Aug 26, 2026 • Kyoto Retreat • 4 Action Items         │
+│    [ Inspect Multi-Turn Transcript ]  [ 📥 Export Markdown ]│
+└──────────────────────────────────────────────────────────┘
+```
+- **Experience:** Real-time synchronized history, full transcript inspector modal, and instant Markdown download for local note-taking tools (Obsidian, Notion).
+
+---
+
+### **Step 6: Provable Database Security Rules & Admin Governance**
+```
+┌──────────────────────────────────────────────────────────┐
+│  🛡️ Firestore Security Isolation Proof                   │
+│  Rule Status: ACTIVE & ENFORCED                          │
+├──────────────────────────────────────────────────────────┤
+│  match /users/{userId}/entries/{entryId} {               │
+│    allow read, write: if request.auth.uid == userId;     │
+│  }                                                       │
+│                                                          │
+│  Simulated cross-user query: 403 PERMISSION_DENIED (✓)   │
+└──────────────────────────────────────────────────────────┘
+```
+- **Experience:** Users have complete peace of mind that their sensitive reflections can never be accessed by another user.
+
+---
+
 ## 🏗️ Architectural Overview
 
 ```
@@ -41,81 +142,6 @@ To solve this, we built **Gemini Reflection Studio**—a full-stack, user-authen
 
 ---
 
-## 🚀 Key Feature Breakdown
-
-### 1. Multi-Turn AI Reflection & Real-Time Synthesis
-Unlike one-shot AI prompts, Gemini Reflection Studio engages in continuous multi-turn dialogue. The model dynamically adjusts its cognitive persona based on the active modality:
-- **Deep Inquire:** Empathetic inquiry and philosophical self-awareness questions.
-- **Creative Brainstorm:** Divergent angles, analogies, and strategic alternatives.
-- **Synthesize:** Executive summaries and cognitive tone classification.
-- **Action Items:** Extracting discrete, measurable next steps.
-
-```typescript
-// Sample structured output schema enforced via Gemini API SDK
-const responseSchema = {
-  type: Type.OBJECT,
-  properties: {
-    replyText: { type: Type.STRING },
-    summary: { type: Type.STRING },
-    keyInsights: { type: Type.ARRAY, items: { type: Type.STRING } },
-    actionItems: { type: Type.ARRAY, items: { type: Type.STRING } },
-    sentiment: { type: Type.STRING },
-    suggestedTitle: { type: Type.STRING },
-    tags: { type: Type.ARRAY, items: { type: Type.STRING } }
-  },
-  required: ['replyText', 'summary', 'keyInsights', 'actionItems', 'sentiment', 'suggestedTitle', 'tags']
-};
-```
-
-### 2. Google Maps Platform: Spatial & Environmental Grounding
-We integrated Google Maps Platform to capture the physical dimension of reflections:
-- **Location Pins:** Users can tag specific places (Nature, Café, Sanctuary, Office, Retreat).
-- **Ambient Weather Awareness:** Captures weather and atmospheric conditions (e.g. *"Misty & Serene (18°C)"*), allowing Gemini to factor surrounding tranquility or energy into its response.
-- **Reflection World Map:** Interactive visual stage allowing users to explore past reflections across the globe.
-
-### 3. Strict User Isolation & Zero-Knowledge Firestore Rules
-Data privacy is enforced at the database security rule layer:
-```javascript
-// firestore.rules
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-
-    match /{document=**} {
-      allow read, write: if false; // Default deny
-    }
-
-    match /users/{userId} {
-      allow read, write: if isOwner(userId);
-    }
-
-    match /users/{userId}/entries/{entryId} {
-      allow read, write: if isOwner(userId); // Strictly owner-bound
-    }
-  }
-}
-```
-
-### 4. Multi-Channel Webhook Dispatcher
-Turn reflections into automated habit triggers:
-- **Slack Block Kit:** Formats rich cards with emotional tone, location, and bulleted action items.
-- **Discord Rich Embeds:** Sends stylized color-coded embeds to personal accountability servers.
-- **Email Digests:** Delivers executive takeaways to your primary inbox.
-
-### 5. Enterprise RBAC & Security Governance
-Includes a simulated Admin Governance dashboard demonstrating:
-- Custom claim role verification (`request.auth.token.role == 'admin'`).
-- Real-time audit telemetry monitoring unauthenticated cross-boundary queries.
-- Gemini prompt safety and toxicity inspection filters.
-
----
-
 ## 💻 Tech Stack
 
 - **Frontend:** React 18, TypeScript, Tailwind CSS, Lucide Icons, React Markdown
@@ -127,15 +153,9 @@ Includes a simulated Admin Governance dashboard demonstrating:
 
 ---
 
-## 🎯 Conclusion & Future Roadmap
+## 🎯 Live Application & Submission Links
 
-Gemini Reflection Studio demonstrates the power of combining agentic LLM reasoning with real-time cloud data isolation and spatial context. 
-
-**Next Steps:**
-- Multimodal audio dictation with vocal cadence tone analysis.
-- AI Time Capsules with scheduled Firestore Cloud Task delivery.
-- Encrypted biometric mobile client.
-
----
+- **Live Application Endpoint:** [https://ais-pre-rd64k74ouyenk7tcawcie6-586821086323.asia-southeast1.run.app](https://ais-pre-rd64k74ouyenk7tcawcie6-586821086323.asia-southeast1.run.app)
+- **GitHub Repository:** [https://github.com/shakthiprakash1509/SentinelThreatLens](https://github.com/shakthiprakash1509/SentinelThreatLens)
 
 *Built with ❤️ using Google AI Studio, Gemini 3.6 Flash, Cloud Firestore, and Google Maps Platform.*
