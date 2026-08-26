@@ -1,134 +1,43 @@
-# Sentinel ThreatLens - Agentic AI Security & Threat Modeling Platform
+# Gemini Reflection Studio 🪞✨
 
-Production-grade Agentic AI Threat Modeling, OWASP Top 10 (Web & LLM) Security Architecture, and Resilient Gemini Fallback System designed for Google Cloud Run, Secret Manager, and Cloud Firestore.
+> An agentic, spatial, and user-isolated AI journaling companion powered by **Gemini 3.6 Flash**, **Cloud Firestore Zero-Knowledge Rules**, and **Google Maps Platform**.
 
----
-
-## 🛡️ Production Directives & Architecture Overview
-
-Sentinel ThreatLens is engineered to enforce high-assurance security across all **5 Agentic Threat Zones**:
-
-1. **Threat Zone 1: Input Surfaces** — Sanitizes untrusted user inputs, uploaded PDF/image attachments, and webhook payloads using strict delimiter separation and schema validation to prevent Direct and Indirect Prompt Injection (OWASP LLM01, A03).
-2. **Threat Zone 2: Planning & Reasoning** — Hardens system instructions, eliminates jailbreak vectors, and validates tool routing logic before calling APIs.
-3. **Threat Zone 3: Tool Execution** — Implements SSRF guards, sandboxed parameter parsing, and role-based execution constraints (OWASP LLM06, A10).
-4. **Threat Zone 4: Memory & State** — Enforces owner-bound Firestore isolation (`request.auth.uid == userId`), RBAC claim checks, and strict undefined-stripping for transaction integrity.
-5. **Threat Zone 5: Inter-System Communication** — Guarantees Zero-Hardcoding Hygiene by integrating Google Cloud Secret Manager and server-side API proxies.
+[![Live App](https://img.shields.io/badge/Live_App-Cloud_Run-10b981?style=for-the-badge)](https://ais-pre-rd64k74ouyenk7tcawcie6-586821086323.asia-southeast1.run.app)
+[![Architecture Blog](https://img.shields.io/badge/Engineering_Blog-BLOG.md-6366f1?style=for-the-badge)](./BLOG.md)
+[![Model](https://img.shields.io/badge/Model-Gemini_3.6_Flash-blue?style=for-the-badge)](https://ai.google.dev/)
+[![Database](https://img.shields.io/badge/Database-Cloud_Firestore-amber?style=for-the-badge)](https://firebase.google.com/)
 
 ---
 
-## ⚡ Gemini Model Resilience & Fallback Protocol
-
-All server-side AI endpoints implement an automated 4-tier model fallback ladder:
-- **Tier 1 (Primary)**: `gemini-3.6-flash`
-- **Tier 2 (High-Availability Fallback)**: `gemini-3.1-flash-lite`
-- **Tier 3 (Dynamic Alias)**: `gemini-flash-latest`
-- **Tier 4 (Deep Reasoning Fallback)**: `gemini-3.7-flash`
-
-The error recovery matrix catches recoverable status codes (`503 UNAVAILABLE`, `429 RESOURCE_EXHAUSTED`, `404 NOT_FOUND`, `500 INTERNAL`) and sequentially attempts the next model before raising any user-facing error.
+## 📖 In-Depth Engineering Blog & Screenshots
+For a complete visual walkthrough and architecture deep-dive:
+👉 **[Read the Full Blog Post with Screenshots (BLOG.md)](./BLOG.md)**
 
 ---
 
-## 🔒 Firestore Security Rules
+## 📸 Step-by-Step Experience Screenshots
 
-To enforce User Data Isolation and Zero Insecure Defaults, deploy the following `firestore.rules`:
+### 1. Google Authentication & Zero-Knowledge Isolation
+![Step 1: Auth and Zero-Knowledge Isolation](screenshots/step1_auth_isolation.svg)
 
-```javascript
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    // Default Deny: Reject unauthenticated root access
-    match /{document=**} {
-      allow read, write: if false;
-    }
+### 2. Multi-Modal Reflection Input & Thinking Personas
+![Step 2: Modalities and Stream Input](screenshots/step2_modalities_studio.svg)
 
-    // Owner-Bound User Data Isolation
-    match /users/{userId}/interactions/{interactionId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
+### 3. Multi-Turn AI Reasoning & Action Item Synthesis
+![Step 3: Gemini 3.6 Flash Reasoning and Action Items](screenshots/step3_gemini_reasoning.svg)
 
-    // User Profile Documents
-    match /users/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
-    }
+### 4. Spatial Grounding with Google Maps Platform
+![Step 4: Spatial Grounding and Weather](screenshots/step4_spatial_maps.svg)
 
-    // Role-Based Access Control (RBAC) for Elevated Admin Operations
-    match /admin/{document=**} {
-      allow read, write: if request.auth != null && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN';
-    }
-  }
-}
-```
+### 5. Cloud Firestore History & Markdown Export
+![Step 5: Cloud Firestore History and Markdown Export](screenshots/step5_history_export.svg)
+
+### 6. Provable Database Security Rules & Admin RBAC
+![Step 6: Zero-Knowledge Security Rules and Audit](screenshots/step6_security_rules.svg)
 
 ---
 
-## 🔐 Google Cloud Secret Manager Setup
+## 🚀 Live Application Endpoint
 
-Follow these steps to securely store and bind the `GEMINI_API_KEY` without hardcoding credentials in source code:
-
-```bash
-# 1. Enable required Google Cloud APIs
-gcloud services enable \
-  run.googleapis.com \
-  secretmanager.googleapis.com \
-  firestore.googleapis.com
-
-# 2. Create and populate the Gemini API Key secret
-gcloud secrets create GEMINI_API_KEY --replication-policy="automatic"
-echo -n "YOUR_GEMINI_API_KEY_HERE" | gcloud secrets versions add GEMINI_API_KEY --data-file=-
-
-# 3. Obtain your Google Cloud Project Number
-PROJECT_NUMBER=$(gcloud projects describe $(gcloud config get-value project) --format="value(projectNumber)")
-
-# 4. Grant the default Cloud Run Compute Service Account access to read the secret
-gcloud secrets add-iam-policy-binding GEMINI_API_KEY \
-  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor"
-```
-
----
-
-## 🚀 Google Cloud Run Deployment Flow
-
-Deploy the application container directly to Google Cloud Run with the Secret Manager environment binding:
-
-```bash
-# Build and deploy service to Cloud Run
-gcloud run deploy sentinel-threatlens \
-  --source . \
-  --platform managed \
-  --region asia-southeast1 \
-  --allow-unauthenticated \
-  --set-secrets GEMINI_API_KEY=GEMINI_API_KEY:latest \
-  --port 3000
-```
-
----
-
-## 🏷️ Mandatory Campaign Verification Labeling
-
-To register the Cloud Run service for automated challenge verification and tracking, execute the following update command:
-
-```bash
-gcloud run services update sentinel-threatlens \
-  --update-labels=dev-tutorial=cloud-run-ai-challenge \
-  --region asia-southeast1
-```
-
----
-
-## 🧪 Comprehensive Verification Walkthrough
-
-| Verification Step | Target Subsystem | Expected Security Outcome |
-| :--- | :--- | :--- |
-| **1. Threat Modeling Engine** | `POST /api/threat-model` | Evaluates 5 Threat Zones, outputs Threat Summary Table with OWASP LLM01-LLM10 and Web Top 10 mappings. |
-| **2. Fallback Ladder Resilience** | `POST /api/gemini/resilient-test` | Recovers smoothly upon simulated 503/429 failures across the 4-tier model ladder. |
-| **3. Zero-Hardcoding Validator** | `POST /api/security-review` | Detects hardcoded `AIzaSy...` keys, emits code diff patches binding Secret Manager. |
-| **4. Firestore Rule Auditor** | `POST /api/rules/validate` | Detects and flags insecure `allow read, write: if true;` wildcards, enforces `request.auth.uid == userId`. |
-| **5. Strict Payload Hygiene** | `POST /api/sanitize` | Strips all `undefined` values recursively to ensure transaction and database driver integrity. |
-
----
-
-## 📜 License
-Apache-2.0
+- **Production Cloud Run URL:** [https://ais-pre-rd64k74ouyenk7tcawcie6-586821086323.asia-southeast1.run.app](https://ais-pre-rd64k74ouyenk7tcawcie6-586821086323.asia-southeast1.run.app)
+- **Repository:** [https://github.com/sha0015/ai-app](https://github.com/sha0015/ai-app)
