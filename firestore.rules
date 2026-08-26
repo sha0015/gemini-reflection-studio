@@ -1,10 +1,11 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper functions
+    // Core Helper functions
     function isAuthenticated() {
       return request.auth != null;
     }
+    
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
@@ -14,14 +15,33 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // User profile documents
+    // User profile documents (isolated to authenticated owner)
     match /users/{userId} {
       allow read, write: if isOwner(userId);
     }
 
-    // Strict user-isolated journal entries and reflections
+    // Client-side encrypted & isolated journal entries and reflections
     match /users/{userId}/entries/{entryId} {
       allow read, write: if isOwner(userId);
+    }
+
+    // Pick 02: Reflection Circles - Capably secured redaction shares with strict TTL & Revocation
+    match /shares/{shareId} {
+      // Sharer can create/update/delete; Grantee can read while unexpired & unrevoked
+      allow create: if isAuthenticated() && request.resource.data.sharerUid == request.auth.uid;
+      
+      allow read: if isAuthenticated() && (
+        resource.data.sharerUid == request.auth.uid ||
+        (
+          resource.data.granteeUid == request.auth.uid &&
+          resource.data.expiresAt > request.time &&
+          resource.data.revoked == false
+        )
+      );
+
+      // Only the original sharer can revoke, update expiry, or delete the share capability
+      allow update: if isAuthenticated() && resource.data.sharerUid == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.sharerUid == request.auth.uid;
     }
   }
 }

@@ -4,9 +4,56 @@ export type EntryCategory =
   | 'brainstorm' 
   | 'gratitude' 
   | 'goal' 
+  | 'mindfulness'
+  | 'decision_memo';
+
+export type ReflectionMode = 
+  | 'reflect' 
+  | 'stoic' 
+  | 'brainstorm' 
+  | 'summarize' 
+  | 'first_principles' 
+  | 'action_items' 
   | 'mindfulness';
 
-export type ReflectionMode = 'reflect' | 'brainstorm' | 'summarize' | 'action_items';
+export interface SpatialContext {
+  locationName: string;
+  coordinates?: {
+    lat: number;
+    lng: number;
+  };
+  weatherCondition?: string;
+  temperatureC?: number;
+  atmosphereEmoji?: string;
+  placeCategory?: 'nature' | 'urban' | 'workspace' | 'sanctuary' | 'travel';
+}
+
+export interface PrivacyShieldState {
+  enabled: boolean;
+  redactedCount: number;
+  tokensRedacted: string[];
+}
+
+export interface OwaspInspectionResult {
+  isClean: boolean;
+  riskScore: number; // 0 to 100
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'BLOCKED';
+  detectedPatterns: string[];
+  explanation?: string;
+}
+
+export type ActionItemStatus = 'open' | 'done' | 'dropped';
+
+export interface ActionItem {
+  id: string;
+  text: string;
+  status: ActionItemStatus;
+  completed?: boolean;
+  targetDate?: string;
+  resolvedAt?: string;
+  priority?: 'high' | 'medium' | 'low';
+  followUpNote?: string;
+}
 
 export interface ConversationMessage {
   id: string;
@@ -14,6 +61,30 @@ export interface ConversationMessage {
   content: string;
   timestamp: number;
   modelUsed?: string;
+  spatialContext?: SpatialContext;
+}
+
+export interface DistressResource {
+  name: string;
+  contact: string;
+  description: string;
+  available: string;
+}
+
+export interface DistressAssessment {
+  isDistressDetected: boolean;
+  category: 'None' | 'Severe_Anxiety' | 'Depressive_Overwhelm' | 'Burnout' | 'Crisis_Distress';
+  calmNotice: string;
+  resources: DistressResource[];
+}
+
+export interface EncryptedEnvelope {
+  v: number;
+  iv: string;
+  salt: string;
+  ct: string;
+  tagLength?: number;
+  encryptedAt: string;
 }
 
 export interface JournalEntry {
@@ -21,14 +92,21 @@ export interface JournalEntry {
   userId: string;
   title: string;
   category: EntryCategory;
+  mode?: ReflectionMode;
   tags: string[];
   summary: string;
   sentiment: string;
   keyInsights: string[];
   actionItems: string[];
+  actionItemsStructured?: ActionItem[];
   messages: ConversationMessage[];
+  spatialContext?: SpatialContext;
   isFavorite: boolean;
   wordCount: number;
+  privacyShieldUsed?: boolean;
+  // Client-Side Zero-Knowledge Encryption
+  isClientEncrypted?: boolean;
+  encryptedEnvelope?: EncryptedEnvelope;
   createdAt: any;
   updatedAt: any;
 }
@@ -38,6 +116,7 @@ export interface ReflectionResponse {
   summary: string;
   keyInsights: string[];
   actionItems: string[];
+  actionItemsStructured?: ActionItem[];
   sentiment: string;
   suggestedTitle: string;
   tags: string[];
@@ -45,6 +124,69 @@ export interface ReflectionResponse {
   latencyMs: number;
   fallbackTriggered: boolean;
   timestamp: string;
+  owaspInspection?: OwaspInspectionResult;
+  distressAssessment?: DistressAssessment;
+}
+
+export interface RedactedSpan {
+  original: string;
+  redactedRole: string;
+  category: 'Name' | 'Organization' | 'Location' | 'Specific Number' | 'Other';
+}
+
+export interface RedactedShareDraft {
+  originalText: string;
+  redactedText: string;
+  redactedSpans: RedactedSpan[];
+  proposedTitle: string;
+  summary: string;
+  keyInsights: string[];
+  actionItems: string[];
+}
+
+export interface SharedReflectionDoc {
+  id: string;
+  sharerUid: string;
+  sharerEmail?: string;
+  granteeUid: string;
+  granteeEmail?: string;
+  title: string;
+  summary: string;
+  redactedContent: string;
+  keyInsights: string[];
+  actionItems: string[];
+  sentiment: string;
+  category: string;
+  tags: string[];
+  createdAt: any;
+  expiresAt: any;
+  revoked: boolean;
+}
+
+export interface CrossEntryPatternReport {
+  analyzedPeriod: string;
+  totalEntriesAnalyzed: number;
+  recurringTriggers: {
+    trigger: string;
+    frequency: number;
+    impactSummary: string;
+    actionableShift: string;
+  }[];
+  actionItemIntegrity: {
+    completionRatePercent: number;
+    doneCount: number;
+    openCount: number;
+    droppedCount: number;
+    synthesis: string;
+  };
+  spatialAtmosphereCorrelations: {
+    placeTypeOrLocation: string;
+    dominantTone: string;
+    insightSummary: string;
+  }[];
+  holisticSynthesis: string;
+  growthTrajectorScore: number;
+  generatedAt: string;
 }
 
 export interface UserProfile {
@@ -55,115 +197,131 @@ export interface UserProfile {
   isAnonymous?: boolean;
 }
 
-export type ThreatZone = 
-  | 'input_surfaces'
-  | 'planning_reasoning'
-  | 'tool_execution'
-  | 'memory_state'
-  | 'inter_system_communication';
-
-export type SeverityLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFORMATIONAL';
-
-export interface ThreatItem {
-  id: string;
-  zone: ThreatZone;
-  title: string;
-  scenario: string;
-  owaspLLM: string; // e.g. "LLM01: Prompt Injection"
-  owaspWeb: string; // e.g. "A03: Injection"
-  strideCategory: 'Spoofing' | 'Tampering' | 'Repudiation' | 'Information Disclosure' | 'Denial of Service' | 'Elevation of Privilege';
-  severity: SeverityLevel;
-  attackVector: string;
-  countermeasures: string[];
-  codeRemediationSnippet: string;
-  testVerificationSteps: string[];
+export interface HealthCheckReport {
+  status: 'healthy' | 'degraded' | 'error';
+  timestamp: string;
+  model: string;
+  region: string;
+  dependencies: {
+    geminiAi: { status: 'ok' | 'fail'; latencyMs: number; lastChecked: string };
+    cloudFirestore: { status: 'ok' | 'fail'; lastChecked: string };
+    geolocationAtmosphere: { status: 'ok' | 'fail'; quotaOk: boolean };
+    webSpeechApi: { supported: boolean };
+  };
 }
 
-export interface ThreatModelResult {
-  systemName: string;
-  architectureType: string;
-  executiveSummary: string;
-  threatScore: number; // 0-100
-  threatZones: {
-    zone: ThreatZone;
-    zoneName: string;
-    description: string;
-    riskCount: number;
-    highestSeverity: SeverityLevel;
-    items: ThreatItem[];
-  }[];
-  generatedWithModel?: string;
-  fallbackHops?: string[];
+// Full types for legacy audit workbench components
+export interface FirestoreRuleAuditResult {
+  isStrict: boolean;
+  score: number;
+  evaluatedAt: string;
+  hasInsecureDefaults: boolean;
+  ownerIsolationEnforced: boolean;
+  isDeployable?: boolean;
+  recommendedRules?: string;
+  findings: Array<{ 
+    type: 'ERROR' | 'WARNING' | 'COMPLIANT'; 
+    rule?: string; 
+    pass?: boolean; 
+    note?: string; 
+    message: string; 
+    ruleExcerpt?: string 
+  }>;
+}
+
+export interface FallbackAttempt {
+  tier?: number;
+  model: string;
+  status: 'SUCCESS' | 'FAILED' | 'success' | 'failed';
   latencyMs?: number;
-  timestamp: string;
+  durationMs?: number;
+  statusCode?: number;
+  errorMessage?: string;
 }
 
 export interface SecurityVulnerability {
   id: string;
   title: string;
-  category: string;
-  severity: SeverityLevel;
-  location: string;
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
   description: string;
-  dataFlowTrace: {
+  mitigation: string;
+  dataFlowTrace?: {
     source: string;
     intermediate: string;
     sink: string;
   };
-  originalSnippet: string;
-  remediatedSnippet: string;
-  diffExplanation: string;
-  mitigationRules: string[];
+  originalSnippet?: string;
+  remediatedSnippet?: string;
 }
 
 export interface SecurityReviewResult {
-  score: number; // 0 - 100
-  status: 'PASSED' | 'WARNINGS' | 'CRITICAL_RISKS';
-  summary: string;
+  score: number;
+  status?: string;
+  summary?: string;
   vulnerabilities: SecurityVulnerability[];
-  safePatternsIdentified: string[];
-  suggestedHeaders: Record<string, string>;
-  modelUsed: string;
-  latencyMs: number;
+  auditTimestamp: string;
 }
 
-export interface FallbackAttempt {
-  model: string;
-  status: 'PENDING' | 'SUCCESS' | 'FAILED' | 'SKIPPED';
-  statusCode?: number;
-  errorMessage?: string;
-  durationMs?: number;
+export type ThreatZone = 
+  | 'input_surfaces'
+  | 'planning_reasoning'
+  | 'tool_execution'
+  | 'memory_state'
+  | 'inter_system_communication'
+  | 'INPUT_SURFACES'
+  | 'PROMPT_PLANNING'
+  | 'TOOL_EXECUTION'
+  | 'MEMORY_STORAGE'
+  | 'INTER_SYSTEM';
+
+export interface ThreatItem {
+  id: string;
+  title?: string;
+  name?: string;
+  scenario?: string;
+  risk?: string;
+  defense?: string;
+  severity?: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  owaspLLM?: string;
+  owaspWeb?: string;
+  owaspMapping?: string;
+  strideCategory?: string;
+  description?: string;
+  attackScenario?: string;
+  attackVector?: string;
+  countermeasures?: string[];
+  testVerificationSteps?: string[];
+  codeRemediationSnippet?: string;
+  remediationSnippet?: string;
 }
 
-export interface FallbackExecutionTelemetry {
-  successfulModel: string;
-  totalDurationMs: number;
-  attempts: FallbackAttempt[];
-  fallbackTriggered: boolean;
-  timestamp: string;
-}
-
-export interface FirestoreRuleAuditResult {
-  hasInsecureDefaults: boolean;
-  ownerIsolationEnforced: boolean;
-  rbacValidated: boolean;
-  findings: {
-    type: 'ERROR' | 'WARNING' | 'COMPLIANT';
-    message: string;
-    line?: number;
-    ruleExcerpt?: string;
-  }[];
-  recommendedRules: string;
-  isDeployable: boolean;
+export interface ThreatModelResult {
+  systemName?: string;
+  generatedWithModel?: string;
+  executiveSummary?: string;
+  threatScore?: number;
+  overallRating: string;
+  zones?: any[];
+  threatZones?: Array<{
+    id: string;
+    zone?: string;
+    name: string;
+    description: string;
+    threatCount: number;
+    items: ThreatItem[];
+  }>;
 }
 
 export interface TestCaseWalkthrough {
   id: string;
-  module: string;
-  userStory: string;
-  preconditions: string[];
-  steps: string[];
-  expectedResult: string;
-  actualStatus?: 'PASSED' | 'PENDING' | 'FAILED';
-  category: 'THREAT_MODELING' | 'CODE_REVIEW' | 'FALLBACK_LADDER' | 'FIRESTORE_RULES' | 'SECRET_MANAGER' | 'DEPLOYMENT';
+  module?: string;
+  category?: string;
+  userStory?: string;
+  preconditions?: string[];
+  steps?: string[];
+  expectedResult?: string;
+  actualStatus?: 'PASSED' | 'FAILED' | 'PENDING' | 'passed' | 'failed' | 'pending';
+  name?: string;
+  assertion?: string;
+  status?: 'passed' | 'failed' | 'pending';
 }

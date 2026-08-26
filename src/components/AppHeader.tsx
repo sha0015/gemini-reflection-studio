@@ -8,23 +8,31 @@ import {
   LogOut, 
   User as UserIcon,
   CheckCircle2,
-  Database
+  Lock,
+  Users,
+  TrendingUp,
+  ListChecks,
+  Activity
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { signOutUser } from '../lib/firebase';
 
+export type AppTabType = 'studio' | 'history' | 'actions' | 'circles' | 'patterns' | 'encryption_proof' | 'security' | 'blog';
+
 interface AppHeaderProps {
   user: User;
-  currentTab: 'studio' | 'history' | 'insights' | 'security' | 'blog';
-  onSelectTab: (tab: 'studio' | 'history' | 'insights' | 'security' | 'blog') => void;
+  currentTab: AppTabType;
+  onSelectTab: (tab: AppTabType) => void;
   onNewEntry: () => void;
+  onOpenHealth: () => void;
 }
 
 export const AppHeader: React.FC<AppHeaderProps> = ({
   user,
   currentTab,
   onSelectTab,
-  onNewEntry
+  onNewEntry,
+  onOpenHealth
 }) => {
   const handleSignOut = async () => {
     try {
@@ -37,9 +45,9 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 gap-4">
+        <div className="flex items-center justify-between h-16 gap-3">
           
-          {/* Logo & App Title */}
+          {/* Logo & Model */}
           <div className="flex items-center gap-3 shrink-0">
             <div 
               onClick={() => onSelectTab('studio')}
@@ -50,89 +58,139 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-extrabold text-slate-900 tracking-tight">
-                  Gemini Reflection & Journal
+                  Gemini Reflection &amp; Journal
                 </span>
                 <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
                   <Sparkles className="w-3 h-3 text-emerald-600" />
-                  3.6 Flash
+                  3.7 Flash
                 </span>
               </div>
               <span className="text-[10px] text-slate-500 font-mono hidden sm:block">
-                Isolated Cloud Firestore Storage
+                Client-Side WebCrypto AES-GCM Encrypted
               </span>
             </div>
           </div>
 
-          {/* Center Navigation Tabs */}
-          <nav className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/80">
+          {/* Navigation Bar */}
+          <nav className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/80 overflow-x-auto max-w-[65vw]">
             <button
               id="tab-studio"
               onClick={() => onSelectTab('studio')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                 currentTab === 'studio'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               }`}
             >
               <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Reflect</span>
+              <span>Studio</span>
+            </button>
+
+            <button
+              id="tab-actions"
+              onClick={() => onSelectTab('actions')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                currentTab === 'actions'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <ListChecks className="w-3.5 h-3.5 text-blue-600" />
+              <span>Actions Loop</span>
+            </button>
+
+            <button
+              id="tab-circles"
+              onClick={() => onSelectTab('circles')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                currentTab === 'circles'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5 text-purple-600" />
+              <span>Reflection Circles</span>
+            </button>
+
+            <button
+              id="tab-patterns"
+              onClick={() => onSelectTab('patterns')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                currentTab === 'patterns'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5 text-teal-600" />
+              <span>Pattern Agent</span>
+            </button>
+
+            <button
+              id="tab-proof"
+              onClick={() => onSelectTab('encryption_proof')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                currentTab === 'encryption_proof'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <Lock className="w-3.5 h-3.5 text-rose-600" />
+              <span>Proof Panel</span>
             </button>
 
             <button
               id="tab-history"
               onClick={() => onSelectTab('history')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                 currentTab === 'history'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               }`}
             >
-              <BookOpen className="w-3.5 h-3.5 text-blue-600" />
-              <span>History</span>
-            </button>
-
-            <button
-              id="tab-insights"
-              onClick={() => onSelectTab('insights')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                currentTab === 'insights'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-              }`}
-            >
-              <BarChart3 className="w-3.5 h-3.5 text-purple-600" />
-              <span>Insights</span>
+              <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Timeline</span>
             </button>
 
             <button
               id="tab-security"
               onClick={() => onSelectTab('security')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                 currentTab === 'security'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               }`}
             >
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
-              <span className="hidden md:inline">Isolation & Rules</span>
+              <span>Security</span>
             </button>
 
             <button
               id="tab-blog"
               onClick={() => onSelectTab('blog')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                 currentTab === 'blog'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               }`}
             >
               <BookOpen className="w-3.5 h-3.5 text-amber-600" />
-              <span>Blog & Architecture</span>
+              <span>Architecture</span>
             </button>
           </nav>
 
-          {/* User Profile & Sign Out */}
-          <div className="flex items-center gap-3 shrink-0">
+          {/* User Profile, Health, and Sign Out */}
+          <div className="flex items-center gap-2 shrink-0">
+            
+            {/* Health Telemetry Button */}
+            <button
+              onClick={onOpenHealth}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-bold transition-all cursor-pointer"
+              title="System Health & Latency Telemetry"
+            >
+              <Activity className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="hidden xl:inline">Health</span>
+            </button>
+
             <div className="flex items-center gap-2">
               {user.photoURL ? (
                 <img
@@ -146,14 +204,6 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                   {user.displayName ? user.displayName[0].toUpperCase() : 'U'}
                 </div>
               )}
-              <div className="hidden lg:block text-left">
-                <span className="text-xs font-bold text-slate-900 block leading-none">
-                  {user.displayName || 'Demo Guest User'}
-                </span>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  {user.email || 'guest_user'}
-                </span>
-              </div>
             </div>
 
             <button

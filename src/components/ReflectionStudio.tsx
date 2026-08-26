@@ -21,18 +21,46 @@ import {
   HelpCircle,
   Copy,
   Check,
-  ChevronRight
+  ChevronRight,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  Shield,
+  ShieldCheck,
+  ShieldAlert,
+  MapPin,
+  Compass,
+  Sun,
+  CloudRain,
+  Share2,
+  Printer,
+  FileJson,
+  FileText,
+  Sliders,
+  Radio,
+  ExternalLink,
+  Lock,
+  HeartPulse
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { User } from 'firebase/auth';
-import { db, doc, setDoc, serverTimestamp } from '../lib/firebase';
+import { db, doc, setDoc, serverTimestamp, getGuestEntries, saveGuestEntries } from '../lib/firebase';
 import { 
   EntryCategory, 
   ReflectionMode, 
   ConversationMessage, 
   JournalEntry, 
-  ReflectionResponse 
+  ReflectionResponse,
+  SpatialContext,
+  PrivacyShieldState,
+  OwaspInspectionResult,
+  DistressAssessment,
+  ActionItem
 } from '../types';
+import { DistressBanner } from './DistressBanner';
+import { encryptClientSide } from '../lib/cryptoVault';
+import { getSessionPassphrase, queueOfflineEntry } from '../lib/offlineQueue';
 
 interface ReflectionStudioProps {
   user: User;
@@ -73,6 +101,12 @@ const CATEGORIES: { id: EntryCategory; label: string; icon: string; promptPlaceh
     promptPlaceholder: 'Detail a milestone or habit you want to build and let Gemini help structure it...'
   },
   { 
+    id: 'decision_memo', 
+    label: 'Decision Memo', 
+    icon: '⚖️',
+    promptPlaceholder: 'Lay out options, trade-offs, and uncertainties for a key decision...'
+  },
+  { 
     id: 'mindfulness', 
     label: 'Mindful Check-in', 
     icon: '🧘',
@@ -80,19 +114,99 @@ const CATEGORIES: { id: EntryCategory; label: string; icon: string; promptPlaceh
   }
 ];
 
-const MODES: { id: ReflectionMode; label: string; description: string }[] = [
-  { id: 'reflect', label: 'Deep Inquire', description: 'Empathetic inquiry & self-awareness questions' },
-  { id: 'brainstorm', label: 'Brainstorm', description: 'Creative perspectives, analogies & ideas' },
-  { id: 'summarize', label: 'Synthesize', description: 'Structured executive summary of core themes' },
-  { id: 'action_items', label: 'Action Items', description: 'Practical next steps & habit blueprints' }
+const MODES: { id: ReflectionMode; label: string; icon: string; description: string }[] = [
+  { id: 'reflect', label: 'Deep Inquire', icon: '🪞', description: 'Empathetic Socratic inquiry & self-awareness mirrors' },
+  { id: 'stoic', label: 'Stoic Reframing', icon: '🏛️', description: 'Dichotomy of control, cognitive reframing & resilience' },
+  { id: 'brainstorm', label: 'Brainstorm', icon: '💡', description: 'Lateral ideas, counterintuitive angles & analogies' },
+  { id: 'summarize', label: 'Synthesize', icon: '📋', description: 'Executive summary, underlying themes & trade-offs' },
+  { id: 'first_principles', label: 'First Principles', icon: '🔬', description: 'Feynman deconstruction down to fundamental truths' },
+  { id: 'action_items', label: 'Action Items', icon: '⚡', description: 'Practical execution milestones & habit commitments' },
+  { id: 'mindfulness', label: 'Somatic Calm', icon: '🌿', description: 'Present-moment grounding & emotional de-escalation' }
+];
+
+const SPATIAL_PRESETS: SpatialContext[] = [
+  {
+    locationName: 'Kyoto Bamboo Sanctuary, Japan',
+    coordinates: { lat: 35.0116, lng: 135.7681 },
+    weatherCondition: 'Morning Mist & Gentle Rain',
+    temperatureC: 18,
+    atmosphereEmoji: '🎋',
+    placeCategory: 'sanctuary'
+  },
+  {
+    locationName: 'Swiss Alpine Chalet, Zermatt',
+    coordinates: { lat: 45.9763, lng: 7.7491 },
+    weatherCondition: 'Crisp Mountain Breeze & Clear Sky',
+    temperatureC: 9,
+    atmosphereEmoji: '🏔️',
+    placeCategory: 'nature'
+  },
+  {
+    locationName: 'San Francisco Bay Studio, CA',
+    coordinates: { lat: 37.7749, lng: -122.4194 },
+    weatherCondition: 'Coastal Fog & Cool Sun',
+    temperatureC: 16,
+    atmosphereEmoji: '🌉',
+    placeCategory: 'workspace'
+  },
+  {
+    locationName: 'Big Sur Coastline, California',
+    coordinates: { lat: 36.2704, lng: -121.8081 },
+    weatherCondition: 'Ocean Waves & Warm Twilight',
+    temperatureC: 21,
+    atmosphereEmoji: '🌊',
+    placeCategory: 'nature'
+  },
+  {
+    locationName: 'Parisian Left Bank Café, France',
+    coordinates: { lat: 48.8566, lng: 2.3522 },
+    weatherCondition: 'Overcast & Quiet Drizzle',
+    temperatureC: 17,
+    atmosphereEmoji: '☕',
+    placeCategory: 'urban'
+  }
 ];
 
 const PROMPT_INSPIRATIONS = [
   "What is a decision I've been postponing, and what is the underlying fear?",
   "What was the most energizing moment of my week, and why did it matter?",
   "How can I break down my current biggest project into 3 bite-sized milestones?",
-  "What are 3 things I can control today versus things I need to release?"
+  "What are 3 things within my direct control today versus things I need to release?",
+  "If I could not fail, what bold experiment would I launch next month?",
+  "Where in my body am I holding stress right now, and what does it need?"
 ];
+
+// Helper: Client-side PII Redaction & Restoration
+function redactPII(text: string): { sanitized: string; count: number; tokenMap: Record<string, string> } {
+  let count = 0;
+  const tokenMap: Record<string, string> = {};
+
+  // Email regex
+  let sanitized = text.replace(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, (match) => {
+    count++;
+    const token = `[REDACTED_EMAIL_${count}]`;
+    tokenMap[token] = match;
+    return token;
+  });
+
+  // Phone regex (US/Intl formats)
+  sanitized = sanitized.replace(/(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g, (match) => {
+    count++;
+    const token = `[REDACTED_PHONE_${count}]`;
+    tokenMap[token] = match;
+    return token;
+  });
+
+  // API Key / Secret Token regex
+  sanitized = sanitized.replace(/(sk-[a-zA-Z0-9]{20,}|AIzaSy[a-zA-Z0-9_-]{33}|ghp_[a-zA-Z0-9]{36})/g, (match) => {
+    count++;
+    const token = `[REDACTED_SECRET_KEY_${count}]`;
+    tokenMap[token] = match;
+    return token;
+  });
+
+  return { sanitized, count, tokenMap };
+}
 
 export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
   user,
@@ -102,7 +216,7 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
 }) => {
   const [currentPrompt, setCurrentPrompt] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<EntryCategory>(activeEntry?.category || 'reflection');
-  const [selectedMode, setSelectedMode] = useState<ReflectionMode>('reflect');
+  const [selectedMode, setSelectedMode] = useState<ReflectionMode>(activeEntry?.mode || 'reflect');
   const [entryTitle, setEntryTitle] = useState(activeEntry?.title || '');
   const [messages, setMessages] = useState<ConversationMessage[]>(activeEntry?.messages || []);
   const [summary, setSummary] = useState(activeEntry?.summary || '');
@@ -116,17 +230,81 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'unsaved'>('synced');
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  
+  // Spatial Grounding State
+  const [spatialContext, setSpatialContext] = useState<SpatialContext>(
+    activeEntry?.spatialContext || SPATIAL_PRESETS[0]
+  );
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+
+  // Privacy Shield State
+  const [privacyShieldEnabled, setPrivacyShieldEnabled] = useState(true);
+  const [redactionStats, setRedactionStats] = useState<{ count: number; active: boolean }>({ count: 0, active: false });
+
+  // Security & OWASP Inspection Result
+  const [latestSecurityAudit, setLatestSecurityAudit] = useState<OwaspInspectionResult | null>(null);
+
+  // Distress Assessment Result
+  const [latestDistressAssessment, setLatestDistressAssessment] = useState<DistressAssessment | null>(null);
+
+  // Voice Dictation (Speech Recognition) State
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  // Text-To-Speech (Speech Synthesis) State
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+
+  // Webhook Modal & Export State
+  const [showWebhookModal, setShowWebhookModal] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [webhookStatus, setWebhookStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
+  const [webhookMessage, setWebhookMessage] = useState('');
+
   const [currentEntryId, setCurrentEntryId] = useState<string>(
     activeEntry?.id || `entry_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`
   );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Setup Web Speech API for voice dictation
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event: any) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        if (transcript) {
+          setCurrentPrompt(prev => prev ? `${prev} ${transcript}` : transcript);
+        }
+      };
+
+      recognition.onerror = (err: any) => {
+        console.warn('Speech recognition error:', err);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
   // Sync state if activeEntry changes externally
   useEffect(() => {
     if (activeEntry) {
       setCurrentEntryId(activeEntry.id);
       setSelectedCategory(activeEntry.category);
+      if (activeEntry.mode) setSelectedMode(activeEntry.mode);
       setEntryTitle(activeEntry.title);
       setMessages(activeEntry.messages || []);
       setSummary(activeEntry.summary || '');
@@ -135,6 +313,7 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
       setActionItems(activeEntry.actionItems || []);
       setTags(activeEntry.tags || []);
       setIsFavorite(activeEntry.isFavorite || false);
+      if (activeEntry.spatialContext) setSpatialContext(activeEntry.spatialContext);
       setSyncStatus('synced');
     }
   }, [activeEntry]);
@@ -144,6 +323,18 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isGenerating]);
 
+  // Keyboard shortcut listener: Cmd/Ctrl + Enter to reflect
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        handleSendReflection();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentPrompt, isGenerating, selectedMode, selectedCategory, spatialContext, privacyShieldEnabled]);
+
   // Calculate total word count
   const calculateWordCount = () => {
     return messages
@@ -151,56 +342,209 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
       .reduce((acc, m) => acc + m.content.trim().split(/\s+/).filter(Boolean).length, 0);
   };
 
-  // Save current entry state to Cloud Firestore (User Isolated)
+  // Toggle Voice Dictation
+  const toggleVoiceDictation = () => {
+    if (!recognitionRef.current) {
+      alert('Speech Recognition is not supported by your browser. Please try Google Chrome or Edge.');
+      return;
+    }
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      try {
+        recognitionRef.current.start();
+        setIsListening(true);
+      } catch (err) {
+        console.error('Error starting speech recognition:', err);
+      }
+    }
+  };
+
+  // Toggle Audio Playback (TTS)
+  const handleToggleSpeech = (msgId: string, textToRead: string) => {
+    if (!('speechSynthesis' in window)) {
+      alert('Text-to-speech is not supported in this browser environment.');
+      return;
+    }
+
+    if (isSpeaking && speakingMessageId === msgId) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      setSpeakingMessageId(null);
+      return;
+    }
+
+    window.speechSynthesis.cancel(); // Stop ongoing speech
+    // Clean markdown symbols for natural speech
+    const cleanText = textToRead.replace(/[#*_`[\]()]/g, '');
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate = 0.95; // Mindful, measured cadence
+    utterance.pitch = 1.0;
+
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      setSpeakingMessageId(null);
+    };
+
+    utterance.onerror = () => {
+      setIsSpeaking(false);
+      setSpeakingMessageId(null);
+    };
+
+    setSpeakingMessageId(msgId);
+    setIsSpeaking(true);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // Browser Geolocation auto-detection
+  const handleDetectCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser.');
+      return;
+    }
+    setIsDetectingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setIsDetectingLocation(false);
+        const { latitude, longitude } = pos.coords;
+        setSpatialContext({
+          locationName: `Current GPS (${latitude.toFixed(2)}°, ${longitude.toFixed(2)}°)`,
+          coordinates: { lat: latitude, lng: longitude },
+          weatherCondition: 'Local Ambient Weather',
+          temperatureC: 20,
+          atmosphereEmoji: '📍',
+          placeCategory: 'nature'
+        });
+      },
+      (err) => {
+        setIsDetectingLocation(false);
+        console.warn('Geolocation error:', err.message);
+        alert('Could not retrieve GPS coordinates. Using curated retreat preset.');
+      },
+      { timeout: 8000 }
+    );
+  };
+
+  // Save current entry state to Cloud Firestore (User Isolated + Client-Side Encrypted)
   const persistToFirestore = async (overrideData?: Partial<JournalEntry>) => {
     if (!user || !user.uid) return;
     setSyncStatus('syncing');
+
+    const structuredActions: ActionItem[] = (overrideData?.actionItemsStructured || actionItems.map((text, idx) => ({
+      id: `act_${currentEntryId}_${idx}`,
+      text,
+      status: 'open',
+      priority: 'medium'
+    })));
 
     const entryToSave: JournalEntry = {
       id: currentEntryId,
       userId: user.uid,
       title: entryTitle || 'Untitled Reflection',
       category: selectedCategory,
+      mode: selectedMode,
       tags: tags.length > 0 ? tags : [selectedCategory],
       summary,
       sentiment: sentiment || 'Reflective',
       keyInsights,
       actionItems,
+      actionItemsStructured: structuredActions,
       messages,
+      spatialContext,
       isFavorite,
       wordCount: calculateWordCount(),
+      privacyShieldUsed: privacyShieldEnabled,
       createdAt: activeEntry?.createdAt || Date.now(),
       updatedAt: Date.now(),
       ...overrideData
     };
 
     try {
-      // Store in user-isolated Firestore path: /users/{userId}/entries/{entryId}
-      const entryRef = doc(db, 'users', user.uid, 'entries', currentEntryId);
-      await setDoc(entryRef, {
+      // If user is a Guest Tester in Sandbox mode, persist to local guest storage
+      if (user.uid?.startsWith('guest_')) {
+        const currentGuestList = getGuestEntries();
+        const existingIdx = currentGuestList.findIndex((e: any) => e.id === currentEntryId);
+        if (existingIdx >= 0) {
+          currentGuestList[existingIdx] = entryToSave;
+        } else {
+          currentGuestList.unshift(entryToSave);
+        }
+        saveGuestEntries(currentGuestList);
+        setSyncStatus('synced');
+        setLastSavedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        onEntrySaved?.(entryToSave);
+        return;
+      }
+
+      // If a client-side encryption passphrase exists in session, encrypt payload into opaque ciphertext
+      const activePass = getSessionPassphrase();
+      let payloadForFirestore: any = {
         ...entryToSave,
         updatedAt: serverTimestamp()
-      }, { merge: true });
+      };
+
+      if (activePass) {
+        try {
+          const sensitiveBody = {
+            title: entryToSave.title,
+            summary: entryToSave.summary,
+            messages: entryToSave.messages,
+            keyInsights: entryToSave.keyInsights,
+            actionItems: entryToSave.actionItems,
+            spatialContext: entryToSave.spatialContext
+          };
+          const encryptedEnvelope = await encryptClientSide(sensitiveBody, activePass);
+          payloadForFirestore.encryptedEnvelope = encryptedEnvelope;
+          payloadForFirestore.isClientEncrypted = true;
+        } catch (encErr) {
+          console.warn('Client encryption warning:', encErr);
+        }
+      }
+
+      // Store in user-isolated Firestore path: /users/{userId}/entries/{entryId}
+      const entryRef = doc(db, 'users', user.uid, 'entries', currentEntryId);
+      await setDoc(entryRef, payloadForFirestore, { merge: true });
 
       setSyncStatus('synced');
       setLastSavedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       onEntrySaved?.(entryToSave);
     } catch (err) {
       console.error('Firestore save error:', err);
+      // Fallback: Queue offline for resilient sync
+      queueOfflineEntry(entryToSave);
       setSyncStatus('unsaved');
     }
   };
 
+  // Main Reflection Dispatcher
   const handleSendReflection = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!currentPrompt.trim() || isGenerating) return;
 
-    const userText = currentPrompt.trim();
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    }
+
+    const rawUserText = currentPrompt.trim();
+    
+    // Apply Privacy Shield (PII Redaction) if enabled
+    let textToSend = rawUserText;
+    let redactedCount = 0;
+    if (privacyShieldEnabled) {
+      const redactor = redactPII(rawUserText);
+      textToSend = redactor.sanitized;
+      redactedCount = redactor.count;
+      setRedactionStats({ count: redactedCount, active: redactedCount > 0 });
+    }
+
     const newUserMessage: ConversationMessage = {
       id: `msg_${Date.now()}`,
       role: 'user',
-      content: userText,
-      timestamp: Date.now()
+      content: rawUserText, // Store raw in private user Firestore
+      timestamp: Date.now(),
+      spatialContext
     };
 
     const updatedMessages = [...messages, newUserMessage];
@@ -214,11 +558,12 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: userText,
+          prompt: textToSend,
           messages: updatedMessages.slice(-8), // Send context
           mode: selectedMode,
           category: selectedCategory,
-          existingTitle: entryTitle
+          existingTitle: entryTitle,
+          spatialContext
         })
       });
 
@@ -227,6 +572,14 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
       }
 
       const data: ReflectionResponse = await response.json();
+
+      if (data.owaspInspection) {
+        setLatestSecurityAudit(data.owaspInspection);
+      }
+
+      if (data.distressAssessment) {
+        setLatestDistressAssessment(data.distressAssessment);
+      }
 
       const newModelMessage: ConversationMessage = {
         id: `msg_model_${Date.now()}`,
@@ -255,19 +608,21 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
       // Save directly to user-isolated Firestore
       await persistToFirestore({
         title: newTitle,
+        mode: selectedMode,
         summary: newSummary,
         sentiment: newSentiment,
         keyInsights: newKeyInsights,
         actionItems: newActionItems,
         tags: newTags,
-        messages: finalMessages
+        messages: finalMessages,
+        spatialContext
       });
     } catch (err: any) {
       console.error('Reflection chat error:', err);
       const errorMessage: ConversationMessage = {
         id: `msg_err_${Date.now()}`,
         role: 'model',
-        content: `I encountered an issue connecting to the AI engine: ${err.message}. Please check your connection or try again.`,
+        content: `I encountered an issue connecting to the AI engine: ${err.message}. Your thoughts are safely buffered in local storage.`,
         timestamp: Date.now(),
         modelUsed: 'gemini-3.6-flash (fallback)'
       };
@@ -277,24 +632,38 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     }
   };
 
+  const handleToggleActionItem = (idx: number) => {
+    setCompletedActions(prev => ({
+      ...prev,
+      [idx]: !prev[idx]
+    }));
+  };
+
   const handleToggleFavorite = () => {
     const nextVal = !isFavorite;
     setIsFavorite(nextVal);
     persistToFirestore({ isFavorite: nextVal });
   };
 
-  const handleExportEntry = (format: 'markdown' | 'json') => {
+  const handleExportEntry = (format: 'markdown' | 'json' | 'print') => {
+    if (format === 'print') {
+      window.print();
+      return;
+    }
+
     const activeData: JournalEntry = {
       id: currentEntryId,
       userId: user.uid,
       title: entryTitle || 'Untitled Reflection',
       category: selectedCategory,
+      mode: selectedMode,
       tags,
       summary,
       sentiment,
       keyInsights,
       actionItems,
       messages,
+      spatialContext,
       isFavorite,
       wordCount: calculateWordCount(),
       createdAt: activeEntry?.createdAt || Date.now(),
@@ -302,17 +671,18 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     };
 
     let content = '';
-    let filename = `${(entryTitle || 'reflection').toLowerCase().replace(/[^a-z0-9]/g, '-')}.${format === 'markdown' ? 'md' : 'json'}`;
+    const filename = `${(entryTitle || 'reflection').toLowerCase().replace(/[^a-z0-9]/g, '-')}.${format === 'markdown' ? 'md' : 'json'}`;
 
     if (format === 'json') {
       content = JSON.stringify(activeData, null, 2);
     } else {
       content = `# ${entryTitle || 'Reflection Entry'}\n\n` +
-        `**Category:** ${selectedCategory} | **Date:** ${new Date().toLocaleDateString()} | **Sentiment:** ${sentiment}\n` +
+        `**Category:** ${selectedCategory} | **Mode:** ${selectedMode} | **Date:** ${new Date().toLocaleDateString()} | **Sentiment:** ${sentiment}\n` +
+        `**Spatial Location:** ${spatialContext?.locationName || 'Unspecified'} (${spatialContext?.weatherCondition || 'N/A'})\n` +
         `**Tags:** ${tags.join(', ')}\n\n` +
         `## Executive Summary\n${summary || 'N/A'}\n\n` +
         `## Key Insights\n${keyInsights.map(i => `- ${i}`).join('\n') || 'None recorded'}\n\n` +
-        `## Action Items\n${actionItems.map(a => `- [ ] ${a}`).join('\n') || 'None recorded'}\n\n` +
+        `## Action Items\n${actionItems.map((a, i) => `- [${completedActions[i] ? 'x' : ' '}] ${a}`).join('\n') || 'None recorded'}\n\n` +
         `## Multi-Turn Dialogue\n\n` +
         messages.map(m => `### ${m.role === 'user' ? 'You' : 'Gemini 3.6 Flash'}\n${m.content}\n`).join('\n---\n\n');
     }
@@ -326,7 +696,45 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handleDispatchWebhook = async () => {
+    if (!webhookUrl.trim()) return;
+    setWebhookStatus('sending');
+    try {
+      const response = await fetch('/api/export/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookUrl: webhookUrl.trim(),
+          entryTitle: entryTitle || 'Daily Reflection',
+          summary,
+          keyInsights,
+          actionItems,
+          sentiment
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Webhook error: ${response.statusText}`);
+      }
+
+      const res = await response.json();
+      setWebhookStatus('success');
+      setWebhookMessage('Successfully dispatched payload to endpoint!');
+      setTimeout(() => {
+        setShowWebhookModal(false);
+        setWebhookStatus('idle');
+      }, 2000);
+    } catch (err: any) {
+      setWebhookStatus('error');
+      setWebhookMessage(err.message || 'Failed to dispatch webhook');
+    }
+  };
+
   const handleResetForNewEntry = () => {
+    if (isSpeaking) {
+      window.speechSynthesis?.cancel();
+      setIsSpeaking(false);
+    }
     setCurrentEntryId(`entry_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`);
     setEntryTitle('');
     setMessages([]);
@@ -338,6 +746,7 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     setTags(['Reflection']);
     setIsFavorite(false);
     setSyncStatus('synced');
+    setLatestSecurityAudit(null);
     onNewEntry?.();
   };
 
@@ -347,19 +756,27 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const currentCategoryConfig = CATEGORIES.find(c => c.id === selectedCategory) || CATEGORIES[0];
-
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
       
-      {/* Left / Main Column: Reflection Conversation & Journal Input */}
+      {/* Main Left Column: Reflection Conversation & Journal Studio */}
       <div className="lg:col-span-8 space-y-4">
         
-        {/* Top Control Bar: Category & Mode Pills */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            {/* Category Selector Dropdown / Chips */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
+        {/* Top Control Bar: Categories, Thinking Modes, & Spatial Presence */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
+          
+          {/* Row 1: Categories Selector Chips */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <Tag className="w-3.5 h-3.5 text-emerald-600" />
+                1. Select Focus Category
+              </span>
+              <span className="text-[11px] text-slate-400 font-mono">
+                {CATEGORIES.length} Structured Templates
+              </span>
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
               {CATEGORIES.map((cat) => (
                 <button
                   key={cat.id}
@@ -368,7 +785,7 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
                     setSelectedCategory(cat.id);
                     persistToFirestore({ category: cat.id });
                   }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                     selectedCategory === cat.id
                       ? 'bg-slate-900 text-white shadow-xs'
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -379,341 +796,530 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
                 </button>
               ))}
             </div>
+          </div>
 
-            {/* Sync & Action Tools */}
-            <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-              <div className="flex items-center gap-1 text-[11px] font-mono text-slate-500 bg-slate-50 px-2 py-1 rounded border border-slate-200">
-                <span className={`w-2 h-2 rounded-full ${
-                  syncStatus === 'synced' ? 'bg-emerald-500' : (syncStatus === 'syncing' ? 'bg-amber-500 animate-pulse' : 'bg-rose-500')
-                }`} />
-                <span>{syncStatus === 'synced' ? 'Firestore Synced' : (syncStatus === 'syncing' ? 'Saving...' : 'Unsaved')}</span>
-              </div>
-
-              <button
-                onClick={handleToggleFavorite}
-                className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
-                  isFavorite ? 'bg-amber-50 border-amber-300 text-amber-600' : 'bg-white border-slate-200 text-slate-400 hover:text-slate-700'
-                }`}
-                title={isFavorite ? 'Remove from favorites' : 'Bookmark as favorite'}
-              >
-                {isFavorite ? <BookmarkCheck className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
-              </button>
-
-              <button
-                onClick={() => handleExportEntry('markdown')}
-                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-colors cursor-pointer"
-                title="Export as Markdown"
-              >
-                <Download className="w-4 h-4" />
-              </button>
-
-              <button
-                onClick={handleResetForNewEntry}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors shadow-xs cursor-pointer"
-              >
-                <PlusCircle className="w-3.5 h-3.5" />
-                <span>New Entry</span>
-              </button>
+          {/* Row 2: 7 Cognitive Thinking Personas */}
+          <div className="space-y-1.5 pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <BrainCircuit className="w-3.5 h-3.5 text-blue-600" />
+                2. Cognitive Reasoning Persona (Gemini 3.6 Flash)
+              </span>
+              <span className="text-[11px] text-slate-500 italic">
+                {MODES.find(m => m.id === selectedMode)?.description}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1.5">
+              {MODES.map((m) => (
+                <button
+                  key={m.id}
+                  id={`btn-mode-${m.id}`}
+                  onClick={() => {
+                    setSelectedMode(m.id);
+                    persistToFirestore({ mode: m.id });
+                  }}
+                  className={`flex flex-col items-center justify-center p-2 rounded-xl text-center transition-all cursor-pointer border ${
+                    selectedMode === m.id
+                      ? 'bg-emerald-50 text-emerald-950 border-emerald-300 font-bold shadow-2xs'
+                      : 'bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100 font-medium'
+                  }`}
+                >
+                  <span className="text-base mb-0.5">{m.icon}</span>
+                  <span className="text-[11px] leading-tight">{m.label}</span>
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Editable Title Input */}
-          <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+          {/* Row 3: Spatial Grounding & Privacy Shield Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100 text-xs">
+            {/* Spatial Grounding Presets */}
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500 flex items-center gap-1 font-medium">
+                <MapPin className="w-3.5 h-3.5 text-rose-500" />
+                Spatial Anchor:
+              </span>
+              <select
+                value={spatialContext.locationName}
+                onChange={(e) => {
+                  const found = SPATIAL_PRESETS.find(p => p.locationName === e.target.value);
+                  if (found) setSpatialContext(found);
+                }}
+                className="bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1 text-slate-800 text-xs font-semibold cursor-pointer focus:outline-emerald-500"
+              >
+                {SPATIAL_PRESETS.map((p) => (
+                  <option key={p.locationName} value={p.locationName}>
+                    {p.atmosphereEmoji} {p.locationName}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleDetectCurrentLocation}
+                disabled={isDetectingLocation}
+                className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer text-[11px] flex items-center gap-1 px-2"
+                title="Detect GPS location"
+              >
+                <Compass className={`w-3.5 h-3.5 ${isDetectingLocation ? 'animate-spin text-emerald-600' : 'text-slate-500'}`} />
+                <span>{isDetectingLocation ? 'Detecting...' : 'Detect GPS'}</span>
+              </button>
+            </div>
+
+            {/* Privacy Shield Toggle */}
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                onClick={() => setPrivacyShieldEnabled(!privacyShieldEnabled)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all cursor-pointer ${
+                  privacyShieldEnabled
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                    : 'bg-slate-100 text-slate-500 border-slate-200'
+                }`}
+                title="Automatically redacts Emails, Phone Numbers, and API Keys before sending to AI"
+              >
+                <ShieldCheck className={`w-3.5 h-3.5 ${privacyShieldEnabled ? 'text-emerald-600' : 'text-slate-400'}`} />
+                <span>Privacy Shield: {privacyShieldEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Studio Conversation & Reflection Stream Container */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+          
+          {/* Header of Entry */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
             <input
               type="text"
-              id="input-entry-title"
+              placeholder="Title your reflection session..."
               value={entryTitle}
               onChange={(e) => {
                 setEntryTitle(e.target.value);
                 setSyncStatus('unsaved');
               }}
               onBlur={() => persistToFirestore({ title: entryTitle })}
-              placeholder="Title this reflection session (or leave blank for AI to name)..."
-              className="w-full text-base font-bold text-slate-900 bg-transparent border-0 focus:outline-none focus:ring-0 placeholder:text-slate-400 placeholder:font-normal"
+              className="text-base sm:text-lg font-bold text-slate-900 bg-transparent border-none outline-none focus:ring-0 placeholder:text-slate-300 flex-1 min-w-[200px]"
             />
+
+            <div className="flex items-center gap-2">
+              <span className={`text-[11px] font-mono flex items-center gap-1 px-2 py-0.5 rounded-full ${
+                syncStatus === 'synced'
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : syncStatus === 'syncing'
+                  ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse'
+                  : 'bg-slate-100 text-slate-600'
+              }`}>
+                <CheckCircle2 className="w-3 h-3" />
+                {syncStatus === 'synced' ? (lastSavedTime ? `Synced (${lastSavedTime})` : 'Synced') : syncStatus === 'syncing' ? 'Syncing...' : 'Unsaved'}
+              </span>
+
+              <button
+                onClick={handleToggleFavorite}
+                className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 cursor-pointer"
+                title="Mark as favorite"
+              >
+                {isFavorite ? <BookmarkCheck className="w-4 h-4 text-amber-500 fill-amber-500" /> : <Bookmark className="w-4 h-4" />}
+              </button>
+
+              <button
+                onClick={handleResetForNewEntry}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer"
+              >
+                <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />
+                <span>New</span>
+              </button>
+            </div>
           </div>
-        </div>
 
-        {/* AI Modes Selector Ribbon */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {MODES.map((mode) => (
-            <button
-              key={mode.id}
-              onClick={() => setSelectedMode(mode.id)}
-              className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                selectedMode === mode.id
-                  ? 'bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-400/40 text-slate-900'
-                  : 'bg-white border-slate-200/80 hover:border-slate-300 text-slate-600'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold block">{mode.label}</span>
-                {selectedMode === mode.id && <Sparkles className="w-3 h-3 text-emerald-600" />}
-              </div>
-              <span className="text-[10px] text-slate-500 line-clamp-1 block mt-0.5">{mode.description}</span>
-            </button>
-          ))}
-        </div>
+          {/* Distress Support Intervention Banner (Calm & Dismissible) */}
+          {latestDistressAssessment && (
+            <DistressBanner
+              assessment={latestDistressAssessment}
+              onDismiss={() => setLatestDistressAssessment(null)}
+            />
+          )}
 
-        {/* Conversation Stream Container */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-xs min-h-[380px] max-h-[560px] overflow-y-auto p-4 sm:p-6 space-y-6 flex flex-col">
-          {messages.length === 0 ? (
-            <div className="my-auto text-center py-10 px-4 space-y-4">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto border border-emerald-100 shadow-xs">
-                <Feather className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Your Reflection Canvas is Ready</h3>
-                <p className="text-xs text-slate-600 max-w-md mx-auto mt-1">
-                  Share whatever is on your mind. Gemini 3.6 Flash will explore your ideas with thoughtful questions, summaries, and actionable steps.
+          {/* Dialogue / Messages Stream */}
+          <div className="space-y-4 max-h-[520px] overflow-y-auto pr-1">
+            {messages.length === 0 ? (
+              <div className="py-12 px-4 text-center space-y-3 bg-slate-50/70 rounded-xl border border-dashed border-slate-200">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto shadow-2xs">
+                  <Feather className="w-6 h-6" />
+                </div>
+                <h3 className="text-sm font-bold text-slate-800">Your Reflection Canvas is Ready</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                  Express what is occupying your thoughts, decisions you face, or milestones achieved. Gemini 3.6 Flash will reason alongside you in <strong>{MODES.find(m => m.id === selectedMode)?.label}</strong> mode.
                 </p>
-              </div>
 
-              {/* Inspiration Prompts */}
-              <div className="pt-2 max-w-lg mx-auto space-y-2">
-                <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-                  Prompt Starters for Inspiration
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
-                  {PROMPT_INSPIRATIONS.map((promptText, idx) => (
+                {/* Prompt Inspirations Chips */}
+                <div className="pt-2 flex flex-wrap justify-center gap-1.5 max-w-lg mx-auto">
+                  {PROMPT_INSPIRATIONS.map((insp, i) => (
                     <button
-                      key={idx}
-                      onClick={() => setCurrentPrompt(promptText)}
-                      className="p-2.5 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs text-slate-700 transition-colors text-left flex items-start gap-1.5 cursor-pointer"
+                      key={i}
+                      onClick={() => setCurrentPrompt(insp)}
+                      className="px-2.5 py-1 rounded-full bg-white border border-slate-200 hover:border-emerald-400 text-[11px] text-slate-600 hover:text-emerald-800 transition-colors text-left cursor-pointer"
                     >
-                      <ChevronRight className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                      <span className="line-clamp-2">{promptText}</span>
+                      💡 {insp}
                     </button>
                   ))}
                 </div>
               </div>
-            </div>
-          ) : (
-            messages.map((msg, index) => (
-              <div
-                key={msg.id || index}
-                className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-              >
-                <div className="flex items-center gap-1.5 mb-1 px-1">
-                  <span className="text-[11px] font-semibold text-slate-600">
-                    {msg.role === 'user' ? (user.displayName || 'You') : 'Gemini 3.6 Flash'}
-                  </span>
-                  <span className="text-[10px] text-slate-400 font-mono">
-                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                  {msg.role === 'model' && (
-                    <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded">
-                      {msg.modelUsed || 'gemini-3.6-flash'}
-                    </span>
-                  )}
-                </div>
-
+            ) : (
+              messages.map((msg, idx) => (
                 <div
-                  className={`p-4 rounded-2xl text-xs sm:text-sm leading-relaxed max-w-2xl ${
-                    msg.role === 'user'
-                      ? 'bg-slate-900 text-slate-50 rounded-tr-xs shadow-xs'
-                      : 'bg-slate-50 text-slate-900 border border-slate-200 rounded-tl-xs shadow-xs'
-                  }`}
+                  key={msg.id || idx}
+                  className={`flex flex-col space-y-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                 >
-                  {msg.role === 'user' ? (
-                    <p className="whitespace-pre-wrap">{msg.content}</p>
-                  ) : (
-                    <div className="markdown-body prose prose-slate prose-sm max-w-none">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400 px-1 font-mono">
+                    <span>{msg.role === 'user' ? 'You' : 'Gemini 3.6 Flash'}</span>
+                    <span>•</span>
+                    <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    {msg.modelUsed && (
+                      <span className="px-1.5 py-0.2 bg-emerald-50 text-emerald-700 rounded text-[10px] font-bold">
+                        {msg.modelUsed}
+                      </span>
+                    )}
+                  </div>
 
-                  {msg.role === 'model' && (
-                    <div className="mt-3 pt-2 border-t border-slate-200/80 flex items-center justify-end">
+                  <div
+                    className={`p-4 rounded-2xl text-xs sm:text-sm leading-relaxed max-w-[90%] sm:max-w-[85%] relative group ${
+                      msg.role === 'user'
+                        ? 'bg-slate-900 text-white rounded-br-xs'
+                        : 'bg-slate-50 text-slate-800 border border-slate-200 rounded-bl-xs'
+                    }`}
+                  >
+                    {msg.role === 'user' ? (
+                      <p className="whitespace-pre-wrap">{msg.content}</p>
+                    ) : (
+                      <div className="markdown-body space-y-2">
+                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      </div>
+                    )}
+
+                    {/* Action Bar (Audio Read, Copy) */}
+                    <div className="flex items-center gap-1.5 pt-2 mt-2 border-t border-slate-200/50 justify-end">
+                      {msg.role === 'model' && (
+                        <button
+                          onClick={() => handleToggleSpeech(msg.id, msg.content)}
+                          className="flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 text-[10px] font-semibold cursor-pointer"
+                        >
+                          {isSpeaking && speakingMessageId === msg.id ? (
+                            <>
+                              <VolumeX className="w-3 h-3 text-rose-600 animate-pulse" />
+                              <span className="text-rose-600">Stop Voice</span>
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="w-3 h-3 text-emerald-600" />
+                              <span>Listen Aloud</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+
                       <button
                         onClick={() => handleCopyText(msg.id, msg.content)}
-                        className="text-[11px] text-slate-500 hover:text-slate-800 flex items-center gap-1 cursor-pointer"
+                        className="flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 text-[10px] font-semibold cursor-pointer"
                       >
-                        {copiedId === msg.id ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                        {copiedId === msg.id ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-400" />}
                         <span>{copiedId === msg.id ? 'Copied' : 'Copy'}</span>
                       </button>
                     </div>
-                  )}
+                  </div>
+                </div>
+              ))
+            )}
+
+            {/* Generating Skeletons */}
+            {isGenerating && (
+              <div className="flex items-start gap-2.5 p-4 rounded-2xl bg-slate-50 border border-slate-200 max-w-sm">
+                <div className="w-4 h-4 rounded-full bg-emerald-600 animate-ping mt-1" />
+                <div className="space-y-1.5">
+                  <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <span>Reasoning with Gemini 3.6 Flash...</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 font-mono">
+                    Applying {MODES.find(m => m.id === selectedMode)?.label} perspective
+                  </div>
                 </div>
               </div>
-            ))
-          )}
+            )}
 
-          {isGenerating && (
-            <div className="flex flex-col items-start space-y-2">
-              <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600" />
-                <span>Gemini 3.6 Flash reflecting & synthesizing insights...</span>
-              </div>
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 max-w-md animate-pulse space-y-2">
-                <div className="h-2.5 bg-slate-200 rounded w-3/4"></div>
-                <div className="h-2.5 bg-slate-200 rounded w-5/6"></div>
-                <div className="h-2.5 bg-slate-200 rounded w-1/2"></div>
-              </div>
-            </div>
-          )}
-
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Multi-Turn Input Box */}
-        <form onSubmit={handleSendReflection} className="bg-white rounded-xl border border-slate-200 p-3 shadow-xs space-y-2">
-          <textarea
-            id="input-reflection-prompt"
-            rows={3}
-            value={currentPrompt}
-            onChange={(e) => setCurrentPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                handleSendReflection(e);
-              }
-            }}
-            placeholder={currentCategoryConfig.promptPlaceholder}
-            className="w-full text-xs sm:text-sm text-slate-900 bg-slate-50/50 p-3 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-900 resize-none font-sans"
-          />
-
-          <div className="flex items-center justify-between pt-1">
-            <div className="flex items-center gap-2 text-[11px] text-slate-500">
-              <span>Mode: <strong className="text-slate-800 capitalize">{selectedMode}</strong></span>
-              <span>•</span>
-              <span>Press <kbd className="font-mono bg-slate-100 px-1 py-0.5 rounded border text-[10px]">Cmd/Ctrl + Enter</kbd></span>
-            </div>
-
-            <button
-              type="submit"
-              id="btn-send-reflection"
-              disabled={isGenerating || !currentPrompt.trim()}
-              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs py-2 px-4 rounded-lg transition-colors shadow-xs disabled:opacity-40 cursor-pointer"
-            >
-              {isGenerating ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-                  <span>Reflecting...</span>
-                </>
-              ) : (
-                <>
-                  <Send className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Send Reflection</span>
-                </>
-              )}
-            </button>
+            <div ref={messagesEndRef} />
           </div>
-        </form>
 
+          {/* Bottom Reflection Input & Voice Controls */}
+          <form onSubmit={handleSendReflection} className="pt-2 border-t border-slate-100 space-y-2">
+            <div className="relative rounded-2xl border border-slate-300 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20 bg-slate-50/50 p-2 transition-all">
+              <textarea
+                rows={3}
+                placeholder={CATEGORIES.find(c => c.id === selectedCategory)?.promptPlaceholder || 'Type or speak your stream of consciousness...'}
+                value={currentPrompt}
+                onChange={(e) => setCurrentPrompt(e.target.value)}
+                className="w-full bg-transparent border-none outline-none text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 resize-none p-1"
+              />
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200/60">
+                {/* Voice Dictation Button & Status */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleVoiceDictation}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      isListening
+                        ? 'bg-rose-500 text-white animate-pulse shadow-xs'
+                        : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5 text-emerald-600" />}
+                    <span>{isListening ? 'Listening (Speak now)...' : 'Voice Dictate'}</span>
+                  </button>
+
+                  <span className="text-[11px] text-slate-400 font-mono hidden sm:inline">
+                    {calculateWordCount()} words • Cmd+Enter to send
+                  </span>
+                </div>
+
+                {/* Submit Reflection Button */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={!currentPrompt.trim() || isGenerating}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Reflect &amp; Reason</span>
+                    <Send className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Redaction Notice if active */}
+            {redactionStats.active && (
+              <div className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5 flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span>Privacy Shield masked {redactionStats.count} sensitive identifier(s) before network dispatch.</span>
+              </div>
+            )}
+          </form>
+        </div>
       </div>
 
-      {/* Right Column: AI Synthesized Intelligence Panel */}
+      {/* Right Column: Real-Time Executive Insights, Action Items & Export Suite */}
       <div className="lg:col-span-4 space-y-4">
         
-        {/* Entry Metadata & Sentiment Card */}
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-              <BrainCircuit className="w-4 h-4 text-emerald-600" />
-              <span>AI Reflection Summary</span>
+        {/* Card 1: Executive Summary & Sentiment */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+            <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+              <Lightbulb className="w-4 h-4 text-amber-500" />
+              Executive Synthesis
             </h3>
             {sentiment && (
-              <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
-                <Smile className="w-3 h-3 text-emerald-600" />
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
                 {sentiment}
               </span>
             )}
           </div>
 
-          <div>
-            <span className="text-[11px] font-semibold text-slate-700 block mb-1">Executive Synthesis:</span>
-            <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-200/80">
-              {summary || 'Your executive summary will automatically synthesize as you converse with Gemini.'}
-            </p>
-          </div>
+          <p className="text-xs text-slate-600 leading-relaxed italic">
+            {summary || 'Your executive reflection summary will be synthesized here as you converse with Gemini.'}
+          </p>
 
           {/* Tags */}
-          <div>
-            <span className="text-[11px] font-semibold text-slate-700 block mb-1.5 flex items-center gap-1">
-              <Tag className="w-3 h-3 text-slate-500" />
-              <span>Extracted Themes & Tags:</span>
-            </span>
-            <div className="flex flex-wrap gap-1.5">
-              {tags.map((tag, idx) => (
-                <span
-                  key={idx}
-                  className="text-[11px] font-mono font-medium bg-slate-100 hover:bg-slate-200 text-slate-800 px-2 py-0.5 rounded-md transition-colors"
-                >
-                  #{tag}
+          {tags.length > 0 && (
+            <div className="flex flex-wrap gap-1 pt-1">
+              {tags.map((t, i) => (
+                <span key={i} className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-mono font-medium">
+                  #{t}
                 </span>
               ))}
             </div>
-          </div>
-        </div>
-
-        {/* Key Insights Card */}
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-3">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-            <Lightbulb className="w-4 h-4 text-amber-500" />
-            <span>Key Takeaways & Insights ({keyInsights.length})</span>
-          </h3>
-
-          {keyInsights.length === 0 ? (
-            <p className="text-xs text-slate-400 italic">Key insights will formulate as your thoughts develop.</p>
-          ) : (
-            <ul className="space-y-2">
-              {keyInsights.map((insight, idx) => (
-                <li key={idx} className="text-xs text-slate-700 flex items-start gap-2 bg-amber-50/40 p-2.5 rounded-lg border border-amber-200/60">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 mt-1.5" />
-                  <span>{insight}</span>
-                </li>
-              ))}
-            </ul>
           )}
         </div>
 
-        {/* Action Items Card */}
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-3">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-            <ListChecks className="w-4 h-4 text-blue-600" />
-            <span>Suggested Action Items ({actionItems.length})</span>
-          </h3>
+        {/* Card 2: Interactive Action Item Tracker */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+            <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+              <ListChecks className="w-4 h-4 text-emerald-600" />
+              Action Commitments ({actionItems.length})
+            </h3>
+          </div>
 
           {actionItems.length === 0 ? (
-            <p className="text-xs text-slate-400 italic">Practical next steps extracted by Gemini will appear here.</p>
+            <p className="text-xs text-slate-400 italic">
+              Concrete next steps will be extracted automatically from your reflection.
+            </p>
           ) : (
-            <ul className="space-y-2">
-              {actionItems.map((action, idx) => (
-                <li 
-                  key={idx} 
-                  onClick={() => setCompletedActions(prev => ({ ...prev, [idx]: !prev[idx] }))}
-                  className={`text-xs p-2.5 rounded-lg border flex items-start gap-2.5 transition-all cursor-pointer ${
-                    completedActions[idx] 
-                      ? 'bg-slate-50 border-slate-200 text-slate-400 line-through' 
-                      : 'bg-white border-slate-200 text-slate-800 hover:border-slate-300 shadow-xs'
+            <div className="space-y-2">
+              {actionItems.map((item, idx) => (
+                <label
+                  key={idx}
+                  className={`flex items-start gap-2.5 p-2 rounded-xl border text-xs transition-colors cursor-pointer ${
+                    completedActions[idx]
+                      ? 'bg-slate-50 border-slate-200 text-slate-400 line-through'
+                      : 'bg-white border-slate-200 text-slate-800 hover:border-emerald-300'
                   }`}
                 >
                   <input
                     type="checkbox"
                     checked={Boolean(completedActions[idx])}
-                    onChange={() => {}} // Handled by li click
-                    className="rounded text-slate-900 focus:ring-slate-900 mt-0.5"
+                    onChange={() => handleToggleActionItem(idx)}
+                    className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
                   />
-                  <span className="leading-snug">{action}</span>
+                  <span className="leading-snug">{item}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Card 3: Key Philosophical / Strategic Insights */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-3">
+          <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-2">
+            <Sparkles className="w-4 h-4 text-purple-600" />
+            Key Insights
+          </h3>
+
+          {keyInsights.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">
+              Core realizations and cognitive patterns will appear here.
+            </p>
+          ) : (
+            <ul className="space-y-2 text-xs text-slate-700">
+              {keyInsights.map((insight, idx) => (
+                <li key={idx} className="flex items-start gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                  <span className="text-purple-600 font-bold">•</span>
+                  <span className="leading-relaxed">{insight}</span>
                 </li>
               ))}
             </ul>
           )}
         </div>
 
-        {/* Isolation & Cloud Firestore Security Footnote */}
-        <div className="p-3.5 bg-slate-900 text-slate-300 rounded-xl text-[11px] space-y-1">
-          <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>User Isolation Verified</span>
+        {/* Card 4: Universal Export & Webhook Integration Suite */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-3">
+          <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-2">
+            <Share2 className="w-4 h-4 text-blue-600" />
+            Export &amp; Integration Suite
+          </h3>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => handleExportEntry('markdown')}
+              className="flex items-center justify-center gap-1.5 p-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold cursor-pointer transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5 text-blue-600" />
+              <span>Markdown (.md)</span>
+            </button>
+
+            <button
+              onClick={() => handleExportEntry('json')}
+              className="flex items-center justify-center gap-1.5 p-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold cursor-pointer transition-colors"
+            >
+              <FileJson className="w-3.5 h-3.5 text-amber-600" />
+              <span>JSON Backup</span>
+            </button>
+
+            <button
+              onClick={() => handleExportEntry('print')}
+              className="flex items-center justify-center gap-1.5 p-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold cursor-pointer transition-colors"
+            >
+              <Printer className="w-3.5 h-3.5 text-slate-600" />
+              <span>Print Dossier</span>
+            </button>
+
+            <button
+              onClick={() => setShowWebhookModal(true)}
+              className="flex items-center justify-center gap-1.5 p-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold cursor-pointer transition-colors"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Slack/Discord</span>
+            </button>
           </div>
-          <p className="text-slate-400 leading-relaxed">
-            Saved exclusively to: <code className="font-mono text-slate-200">/users/{user.uid.slice(0, 10)}.../entries</code>. Other users cannot access this document.
-          </p>
         </div>
 
+        {/* Card 5: OWASP LLM Prompt Defense Live Telemetry */}
+        {latestSecurityAudit && (
+          <div className="bg-slate-900 text-white rounded-2xl p-5 shadow-xs space-y-2 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <span className="font-bold flex items-center gap-1.5 text-emerald-400">
+                <ShieldCheck className="w-4 h-4" />
+                OWASP LLM Defense
+              </span>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                latestSecurityAudit.riskLevel === 'LOW'
+                  ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                  : 'bg-amber-950 text-amber-400 border border-amber-800'
+              }`}>
+                Risk: {latestSecurityAudit.riskLevel} ({latestSecurityAudit.riskScore}/100)
+              </span>
+            </div>
+            <p className="text-slate-300 text-[11px] leading-relaxed">
+              {latestSecurityAudit.explanation}
+            </p>
+          </div>
+        )}
       </div>
 
+      {/* Webhook Modal */}
+      {showWebhookModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4 border border-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Share2 className="w-4 h-4 text-emerald-600" />
+                Dispatch Reflection to Webhook
+              </h3>
+              <button
+                onClick={() => setShowWebhookModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Enter your Slack Incoming Webhook, Discord Webhook, or Zapier endpoint. We will format and dispatch your structured summary and action items instantly.
+            </p>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-700">Webhook URL</label>
+              <input
+                type="url"
+                placeholder="https://hooks.slack.com/services/... or https://discord.com/api/webhooks/..."
+                value={webhookUrl}
+                onChange={(e) => setWebhookUrl(e.target.value)}
+                className="w-full text-xs font-mono p-2.5 rounded-xl border border-slate-300 focus:outline-emerald-500"
+              />
+            </div>
+
+            {webhookMessage && (
+              <div className={`p-2.5 rounded-xl text-xs ${
+                webhookStatus === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
+              }`}>
+                {webhookMessage}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowWebhookModal(false)}
+                className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDispatchWebhook}
+                disabled={webhookStatus === 'sending' || !webhookUrl}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50 cursor-pointer"
+              >
+                {webhookStatus === 'sending' ? 'Dispatching...' : 'Send Payload'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -32,12 +32,14 @@ import {
   onSnapshot, 
   deleteDoc, 
   doc, 
-  updateDoc 
+  updateDoc,
+  getGuestEntries,
+  saveGuestEntries
 } from '../lib/firebase';
 import { JournalEntry, EntryCategory } from '../types';
 
 interface EntryHistoryProps {
-  user: User;
+  user: any;
   onSelectEntry: (entry: JournalEntry) => void;
   onNewEntry: () => void;
 }
@@ -55,11 +57,23 @@ export const EntryHistory: React.FC<EntryHistoryProps> = ({
   const [selectedDetailEntry, setSelectedDetailEntry] = useState<JournalEntry | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  // Real-time Firestore subscription for user-isolated entries
+  // Real-time Firestore subscription or Guest Sandbox buffer
   useEffect(() => {
     if (!user || !user.uid) {
       setLoading(false);
       return;
+    }
+
+    if (user.uid.startsWith('guest_')) {
+      setEntries(getGuestEntries());
+      setLoading(false);
+      const handleGuestUpdate = () => {
+        setEntries(getGuestEntries());
+      };
+      window.addEventListener('gemini_reflection_guest_entries_changed', handleGuestUpdate);
+      return () => {
+        window.removeEventListener('gemini_reflection_guest_entries_changed', handleGuestUpdate);
+      };
     }
 
     setLoading(true);
@@ -105,6 +119,15 @@ export const EntryHistory: React.FC<EntryHistoryProps> = ({
     e?.stopPropagation();
     if (!user?.uid) return;
     try {
+      if (user.uid.startsWith('guest_')) {
+        const currentList = getGuestEntries().filter(item => item.id !== entryId);
+        saveGuestEntries(currentList);
+        if (selectedDetailEntry?.id === entryId) {
+          setSelectedDetailEntry(null);
+        }
+        setDeleteConfirmId(null);
+        return;
+      }
       await deleteDoc(doc(db, 'users', user.uid, 'entries', entryId));
       if (selectedDetailEntry?.id === entryId) {
         setSelectedDetailEntry(null);
@@ -120,6 +143,11 @@ export const EntryHistory: React.FC<EntryHistoryProps> = ({
     if (!user?.uid) return;
     try {
       const nextVal = !entry.isFavorite;
+      if (user.uid.startsWith('guest_')) {
+        const currentList = getGuestEntries().map(item => item.id === entry.id ? { ...item, isFavorite: nextVal } : item);
+        saveGuestEntries(currentList);
+        return;
+      }
       await updateDoc(doc(db, 'users', user.uid, 'entries', entry.id), {
         isFavorite: nextVal
       });
