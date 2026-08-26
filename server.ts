@@ -5,6 +5,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 import dns from 'dns/promises';
 import net from 'net';
+import rateLimit from 'express-rate-limit';
 
 dotenv.config();
 
@@ -237,6 +238,10 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Cloud Run sits behind Google's front-end proxy; without this, req.ip resolves to
+  // the proxy's address and rate limiting would lump every visitor into one bucket.
+  app.set('trust proxy', 1);
+
   // 1. Top-Level Request Deserialization (Ordering Guarantee)
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
@@ -247,6 +252,27 @@ async function startServer() {
       req.body = stripUndefinedDeep(req.body);
     }
     next();
+  });
+
+  // Baseline abuse guard on every API route -- no endpoint here checks caller identity
+  // (Firestore access control is enforced separately by firestore.rules on the client
+  // SDK), so this is the only backstop against a single caller flooding the server.
+  app.use('/api', rateLimit({
+    windowMs: 60 * 1000,
+    limit: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests. Please slow down and try again shortly.' }
+  }));
+
+  // Tighter limit for routes that call the Gemini API or an outbound third-party
+  // service on every request -- these are the ones with real per-request cost.
+  const externalCallLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Rate limit exceeded for this endpoint. Please wait a few minutes and try again.' }
   });
 
   // Health check endpoint
@@ -329,7 +355,7 @@ async function startServer() {
   }
 
   // AI Journal & Reflection Companion Endpoint (Gemini 3.6 Flash)
-  app.post('/api/chat/reflect', async (req: Request, res: Response) => {
+  app.post('/api/chat/reflect', externalCallLimiter, async (req: Request, res: Response) => {
     try {
       const data = (req.body && typeof req.body === 'object') ? req.body : {};
       const { 
@@ -578,7 +604,7 @@ What aspect of this feels most important for you to focus on next?`,
   });
 
   // Pick 02: Reflection Circles - Redaction & Share Drafting Agent
-  app.post('/api/circles/redact-for-share', async (req: Request, res: Response) => {
+  app.post('/api/circles/redact-for-share', externalCallLimiter, async (req: Request, res: Response) => {
     const data = (req.body && typeof req.body === 'object') ? req.body : {};
     const text: string = typeof data.text === 'string' ? data.text : '';
     const title: string = typeof data.title === 'string' ? data.title : 'Shared Reflection';
@@ -660,7 +686,7 @@ Task:
   });
 
   // Pick 03: Cross-Entry Pattern & Longitudinal Reasoning Agent
-  app.post('/api/patterns/analyze-corpus', async (req: Request, res: Response) => {
+  app.post('/api/patterns/analyze-corpus', externalCallLimiter, async (req: Request, res: Response) => {
     const data = (req.body && typeof req.body === 'object') ? req.body : {};
     const entries: any[] = Array.isArray(data.entries) ? data.entries : [];
 
@@ -845,7 +871,7 @@ Synthesize high-order longitudinal patterns:
 
 
   // Spatial Grounding & Live Atmospheric Weather API (Google Maps / Open-Meteo integration)
-  app.post('/api/spatial/weather-and-location', async (req: Request, res: Response) => {
+  app.post('/api/spatial/weather-and-location', externalCallLimiter, async (req: Request, res: Response) => {
     try {
       const data = (req.body && typeof req.body === 'object') ? req.body : {};
       let { lat, lng, placeQuery, placeCategory = 'nature' } = data;
@@ -964,7 +990,7 @@ Synthesize high-order longitudinal patterns:
   });
 
   // Outbound Webhook Verification Ping
-  app.post('/api/webhooks/test-ping', async (req: Request, res: Response) => {
+  app.post('/api/webhooks/test-ping', externalCallLimiter, async (req: Request, res: Response) => {
     try {
       const data = (req.body && typeof req.body === 'object') ? req.body : {};
       const { webhookUrl } = data;
@@ -1045,7 +1071,8 @@ Synthesize high-order longitudinal patterns:
   });
 
   // Outbound Webhook Integration Endpoint (Slack / Discord / Custom Webhook)
-  app.post('/api/export/webhook', async (req: Request, res: Response) => {
+  // Shared by both /api/export/webhook and its /api/webhooks/dispatch alias below.
+  const handleExportWebhook = async (req: Request, res: Response) => {
     try {
       const data = (req.body && typeof req.body === 'object') ? req.body : {};
       const { webhookUrl, entryTitle, summary, keyInsights = [], actionItems = [], sentiment, spatialContext, broadcastType = 'reflection' } = data;
@@ -1188,20 +1215,13 @@ Synthesize high-order longitudinal patterns:
       console.error('Webhook dispatch error:', err);
       res.status(500).json({ error: err.message || 'Failed to dispatch webhook' });
     }
-  });
+  };
 
-  // Alias for /api/webhooks/dispatch
-  app.post('/api/webhooks/dispatch', async (req: Request, res: Response) => {
-    // Re-route internally to /api/export/webhook
-    const handler = (app as any)._router.stack.find((layer: any) => layer.route && layer.route.path === '/api/export/webhook');
-    if (handler && handler.route && handler.route.stack && handler.route.stack[0]) {
-      return handler.route.stack[0].handle(req, res);
-    }
-    res.status(500).json({ error: 'Handler not resolved' });
-  });
+  app.post('/api/export/webhook', externalCallLimiter, handleExportWebhook);
+  app.post('/api/webhooks/dispatch', externalCallLimiter, handleExportWebhook);
 
   // Agentic Threat Modeling Endpoint
-  app.post('/api/threat-model', async (req: Request, res: Response) => {
+  app.post('/api/threat-model', externalCallLimiter, async (req: Request, res: Response) => {
     try {
       const data = (req.body && typeof req.body === 'object') ? req.body : {};
       const { architectureName, description, components, inputSurfaces, tools, storageType, integrations } = data;
@@ -1319,7 +1339,7 @@ You must output a structured threat analysis strictly adhering to the requested 
   });
 
   // Security Reviewer Endpoint (Code & Rule Scanner)
-  app.post('/api/security-review', async (req: Request, res: Response) => {
+  app.post('/api/security-review', externalCallLimiter, async (req: Request, res: Response) => {
     try {
       const data = (req.body && typeof req.body === 'object') ? req.body : {};
       const { codeSnippet, codeType } = data;
@@ -1428,7 +1448,7 @@ Perform an in-depth security inspection:
   });
 
   // Resilient Ladder Interactive Test Endpoint
-  app.post('/api/gemini/resilient-test', async (req: Request, res: Response) => {
+  app.post('/api/gemini/resilient-test', externalCallLimiter, async (req: Request, res: Response) => {
     try {
       const data = (req.body && typeof req.body === 'object') ? req.body : {};
       const { testPrompt, simulateFailureOnPrimary } = data;
