@@ -22,23 +22,36 @@ export const HealthDiagnosticsModal: React.FC<{ isOpen: boolean; onClose: () => 
   const [report, setReport] = useState<HealthCheckReport | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Web Speech support is a browser capability, not a server dependency -- the server
+  // can never actually know this, so it's always detected here on the client rather
+  // than trusted from (or faked in) the API response.
+  const detectWebSpeechSupport = () => Boolean('webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
+
   const fetchHealth = async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/health');
       const data = await res.json();
-      setReport(data);
-    } catch {
       setReport({
-        status: 'healthy',
+        ...data,
+        dependencies: {
+          ...data.dependencies,
+          webSpeechApi: { supported: detectWebSpeechSupport() }
+        }
+      });
+    } catch {
+      // The health check itself couldn't be reached -- report the network-dependent
+      // checks as unknown/failed rather than claiming everything is fine.
+      setReport({
+        status: 'error',
         timestamp: new Date().toISOString(),
         model: 'gemini-3.7-flash',
-        region: 'asia-southeast1',
+        region: 'unknown',
         dependencies: {
-          geminiAi: { status: 'ok', latencyMs: 142, lastChecked: new Date().toISOString() },
-          cloudFirestore: { status: 'ok', lastChecked: new Date().toISOString() },
-          geolocationAtmosphere: { status: 'ok', quotaOk: true },
-          webSpeechApi: { supported: Boolean('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) }
+          geminiAi: { status: 'fail', latencyMs: 0, lastChecked: new Date().toISOString() },
+          cloudFirestore: { status: 'fail', lastChecked: new Date().toISOString() },
+          geolocationAtmosphere: { status: 'fail', quotaOk: false },
+          webSpeechApi: { supported: detectWebSpeechSupport() }
         }
       });
     } finally {
@@ -78,75 +91,88 @@ export const HealthDiagnosticsModal: React.FC<{ isOpen: boolean; onClose: () => 
           </button>
         </div>
 
-        {report && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-              <div>
-                <span className="text-xs font-bold text-slate-700 block">Overall Cluster Status</span>
-                <span className="text-xs text-slate-500 font-mono">Region: {report.region} | Model: {report.model}</span>
+        {report && (() => {
+          const overallOk = report.status === 'healthy';
+          const badgeCls = (ok: boolean) => ok ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800';
+
+          return (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                <div>
+                  <span className="text-xs font-bold text-slate-700 block">Overall Cluster Status</span>
+                  <span className="text-xs text-slate-500 font-mono">Region: {report.region} | Model: {report.model}</span>
+                </div>
+                <span className={`px-2.5 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 ${badgeCls(overallOk)}`}>
+                  {overallOk ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                  {report.status.toUpperCase()}
+                </span>
               </div>
-              <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                {report.status.toUpperCase()}
-              </span>
+
+              {/* Dependencies -- each tile reflects the actual status in `report`, not a fixed label */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Cpu className="w-3.5 h-3.5 text-emerald-600" />
+                      Gemini 3.7 Flash API
+                    </span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${badgeCls(report.dependencies.geminiAi.status === 'ok')}`}>
+                      {report.dependencies.geminiAi.status === 'ok' ? `${report.dependencies.geminiAi.latencyMs}ms` : 'UNAVAILABLE'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    {report.dependencies.geminiAi.status === 'ok' ? 'Authenticated & operational' : 'Not reachable -- offline fallback responses in use'}
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Server className="w-3.5 h-3.5 text-blue-600" />
+                      Cloud Firestore DB
+                    </span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${badgeCls(report.dependencies.cloudFirestore.status === 'ok')}`}>
+                      {report.dependencies.cloudFirestore.status === 'ok' ? 'REACHABLE' : 'UNREACHABLE'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">Security rules active</p>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Globe className="w-3.5 h-3.5 text-amber-600" />
+                      Spatial Atmosphere Grounding
+                    </span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${badgeCls(report.dependencies.geolocationAtmosphere.status === 'ok')}`}>
+                      {report.dependencies.geolocationAtmosphere.status === 'ok'
+                        ? (report.dependencies.geolocationAtmosphere.quotaOk ? 'OK' : 'QUOTA LIMITED')
+                        : 'UNAVAILABLE'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    {report.dependencies.geolocationAtmosphere.status === 'ok' ? 'Nominatim + Open-Meteo reachable' : 'Fallback presets active'}
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Mic className="w-3.5 h-3.5 text-purple-600" />
+                      Web Speech Dictation
+                    </span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${badgeCls(report.dependencies.webSpeechApi.supported)}`}>
+                      {report.dependencies.webSpeechApi.supported ? 'SUPPORTED' : 'NOT SUPPORTED'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    {report.dependencies.webSpeechApi.supported ? 'Detected in this browser' : 'Not available in this browser'}
+                  </p>
+                </div>
+              </div>
             </div>
-
-            {/* Dependencies */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <Cpu className="w-3.5 h-3.5 text-emerald-600" />
-                    Gemini 3.7 Flash API
-                  </span>
-                  <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold">
-                    {report.dependencies.geminiAi.latencyMs}ms
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-500">Authenticated &amp; operational</p>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <Server className="w-3.5 h-3.5 text-blue-600" />
-                    Cloud Firestore DB
-                  </span>
-                  <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold">
-                    CONNECTED
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-500">Security rules active</p>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <Globe className="w-3.5 h-3.5 text-amber-600" />
-                    Spatial Atmosphere Grounding
-                  </span>
-                  <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold">
-                    GRACEFUL
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-500">Fallback presets active on quota</p>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <Mic className="w-3.5 h-3.5 text-purple-600" />
-                    Web Speech Dictation
-                  </span>
-                  <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold">
-                    SUPPORTED
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-500">Live speech-to-text ready</p>
-              </div>
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         <div className="flex justify-end pt-2 border-t border-slate-100">
           <button
