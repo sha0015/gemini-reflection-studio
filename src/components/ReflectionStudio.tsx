@@ -65,7 +65,7 @@ import {
 } from '../types';
 import { DistressBanner } from './DistressBanner';
 import { encryptClientSide, generateRecoveryPhrase } from '../lib/cryptoVault';
-import { getSessionPassphrase, getStoredRecoveryPhrase, setStoredRecoveryPhrase, queueOfflineEntry } from '../lib/offlineQueue';
+import { getSessionPassphrase, setSessionPassphrase, getStoredRecoveryPhrase, setStoredRecoveryPhrase, queueOfflineEntry } from '../lib/offlineQueue';
 
 interface ReflectionStudioProps {
   user: User;
@@ -244,6 +244,14 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
   const [placeSearchQuery, setPlaceSearchQuery] = useState('');
   const [isSearchingPlace, setIsSearchingPlace] = useState(false);
   const [showSpatialModal, setShowSpatialModal] = useState(false);
+
+  // Mandatory Encryption Vault Setup: every real (non-guest) save requires a session
+  // passphrase. If one isn't set yet, the save is deferred and this gate collects one.
+  const [showVaultSetupModal, setShowVaultSetupModal] = useState(false);
+  const [pendingSaveOverride, setPendingSaveOverride] = useState<Partial<JournalEntry> | null>(null);
+  const [vaultPassphraseInput, setVaultPassphraseInput] = useState('');
+  const [vaultSetupError, setVaultSetupError] = useState<string | null>(null);
+  const [vaultRecoveryToShow, setVaultRecoveryToShow] = useState<string | null>(null);
 
   // Privacy Shield State
   const [privacyShieldEnabled, setPrivacyShieldEnabled] = useState(true);
@@ -479,6 +487,17 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
   // Save current entry state to Cloud Firestore (User Isolated + Client-Side Encrypted)
   const persistToFirestore = async (overrideData?: Partial<JournalEntry>) => {
     if (!user || !user.uid) return;
+
+    // Encryption is mandatory for every real account -- the local guest sandbox never
+    // touches Firestore at all, so it's exempt. If no passphrase is active yet, defer
+    // this save and collect one instead of writing plaintext.
+    const isGuestUser = Boolean(user.uid?.startsWith('guest_'));
+    if (!isGuestUser && !getSessionPassphrase()) {
+      setPendingSaveOverride(overrideData || {});
+      setShowVaultSetupModal(true);
+      return;
+    }
+
     setSyncStatus('syncing');
 
     const structuredActions: ActionItem[] = (overrideData?.actionItemsStructured || actionItems.map((text, idx) => ({
@@ -859,6 +878,49 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  // Finalizes vault setup (passphrase now active for this session) and retries
+  // whatever save was waiting on it.
+  const finishVaultSetup = () => {
+    setShowVaultSetupModal(false);
+    setVaultPassphraseInput('');
+    setVaultSetupError(null);
+    setVaultRecoveryToShow(null);
+    const override = pendingSaveOverride;
+    setPendingSaveOverride(null);
+    persistToFirestore(override || undefined);
+  };
+
+  const handleUnlockVault = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const passphrase = vaultPassphraseInput.trim();
+    if (passphrase.length < 8) {
+      setVaultSetupError('Use a passphrase of at least 8 characters.');
+      return;
+    }
+    setVaultSetupError(null);
+    setSessionPassphrase(passphrase);
+
+    // First time this browser has ever encrypted anything: generate a recovery
+    // phrase and force the user to see it before continuing -- it's the only way
+    // back in if the passphrase is lost. If one already exists, nothing new to show.
+    let recoveryPhrase = getStoredRecoveryPhrase();
+    if (!recoveryPhrase) {
+      recoveryPhrase = generateRecoveryPhrase();
+      setStoredRecoveryPhrase(recoveryPhrase);
+      setVaultRecoveryToShow(recoveryPhrase);
+    } else {
+      finishVaultSetup();
+    }
+  };
+
+  const handleCancelVaultSetup = () => {
+    setShowVaultSetupModal(false);
+    setPendingSaveOverride(null);
+    setVaultPassphraseInput('');
+    setVaultSetupError(null);
+    setVaultRecoveryToShow(null);
   };
 
   // This entry's content is encrypted and couldn't be decrypted with the current
@@ -1475,6 +1537,72 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
                 ))}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mandatory Encryption Vault Setup Modal */}
+      {showVaultSetupModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 text-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4 border border-slate-800">
+            {vaultRecoveryToShow ? (
+              <>
+                <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                  <h3 className="text-sm font-bold text-slate-100">Save your recovery phrase</h3>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  This is the only backup to your encrypted entries if you forget your passphrase. Write it down somewhere safe — it will not be shown again automatically.
+                </p>
+                <div className="bg-slate-950 border border-slate-700 rounded-xl p-3 font-mono text-xs text-amber-300 select-all">
+                  {vaultRecoveryToShow}
+                </div>
+                <button
+                  onClick={finishVaultSetup}
+                  className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold cursor-pointer"
+                >
+                  I've saved it — Continue
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <Lock className="w-5 h-5 text-emerald-400" />
+                  <h3 className="text-sm font-bold text-slate-100">Unlock your encryption vault</h3>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Every reflection is encrypted client-side before it reaches Firestore — plaintext never touches the server. Enter your passphrase to continue saving. If this is your first time, this creates it. Use the same one every time so your entries stay unlockable.
+                </p>
+                <form onSubmit={handleUnlockVault} className="space-y-2">
+                  <input
+                    type="password"
+                    autoFocus
+                    placeholder="Encryption passphrase (min. 8 characters)"
+                    value={vaultPassphraseInput}
+                    onChange={(e) => setVaultPassphraseInput(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-xs font-mono text-slate-100 focus:outline-emerald-500"
+                  />
+                  {vaultSetupError && (
+                    <p className="text-[11px] text-rose-400 flex items-center gap-1"><AlertCircle className="w-3 h-3 shrink-0" />{vaultSetupError}</p>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleCancelVaultSetup}
+                      className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold cursor-pointer"
+                    >
+                      Unlock &amp; Save
+                    </button>
+                  </div>
+                </form>
+              </>
+            )}
           </div>
         </div>
       )}

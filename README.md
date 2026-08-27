@@ -23,9 +23,10 @@
 ---
 
 ### 2. 🔐 True Client-Side Zero-Knowledge Encryption
-* **WebCrypto AES-GCM (256-bit) + PBKDF2 (100,000 rounds)**: Journal entries are cryptographically encrypted directly inside the browser thread before network dispatch. Plaintext never touches Firestore at rest.
-* **Live Cryptographic Proof Panel**: Real-time inspector rendering the raw ciphertext payload (`iv`, `salt`, `ct`, `v`) stored in Firestore alongside your decrypted client-side view.
-* **12-Word Mnemonic Recovery**: Client-side backup phrase generation for key derivation without server-side escrow.
+* **Mandatory for every real account**: The first time you save a reflection, you're asked to set an encryption passphrase — there's no way to save plaintext to Firestore. (The local guest sandbox is exempt since it never leaves your browser's `localStorage` in the first place.)
+* **WebCrypto AES-GCM (256-bit) + PBKDF2 (100,000 rounds), Dual Key-Wrap Envelope**: Each entry is encrypted under its own random data key, which is independently wrapped under both your passphrase and your recovery phrase — either one alone can decrypt it. Firestore only ever stores the ciphertext envelope (`v`, `iv`, `ct`, `keyWraps`); the human-readable fields are never written.
+* **Live Cryptographic Proof Panel**: Inspector rendering the actual ciphertext envelope stored in Firestore for a real entry, side-by-side with what your passphrase decrypts it to.
+* **12-Word Mnemonic Recovery**: Generated on first use and independently able to decrypt your entries — not just a displayed phrase, an actual second key-wrap.
 
 ---
 
