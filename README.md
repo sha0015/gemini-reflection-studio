@@ -1,7 +1,7 @@
 # Gemini Reflection Studio & Security Suite 🪞🛡️
 
 > **Next-Generation Agentic, Privacy-Preserving Reflection Companion & AI Security Verification Suite**  
-> Built for the Google AI Studio Social Challenge with **Gemini 3.7 Flash**, **True Client-Side WebCrypto AES-GCM (256-bit) Encryption**, **5-Zone Threat Modeling Studio**, **OWASP Security Code Reviewer**, **Firestore Rule Static Analyzer**, **Model Resilience Fallback Ladder**, **Reflection Circles with AI Redaction Diffs**, **Longitudinal Cross-Entry Pattern Agent**, **Action Item State Machine**, and **Distress-Aware Support Routing**.
+> Built for the Google AI Studio Social Challenge with **Gemini 3.7 Flash**, **Mandatory Client-Side WebCrypto AES-GCM (256-bit) Encryption**, **5-Zone Threat Modeling Studio**, **OWASP Security Code Reviewer**, **Firestore Rule Static Analyzer**, **Model Resilience Fallback Ladder**, **Reflection Circles with AI Redaction Diffs**, **Longitudinal Cross-Entry Pattern Agent**, **Action Item State Machine**, **Distress-Aware Support Routing**, and an **SSRF-Hardened, Rate-Limited API Gateway**.
 
 [![Live App](https://img.shields.io/badge/Live_App-Cloud_Run-10b981?style=for-the-badge)](https://ais-pre-rd64k74ouyenk7tcawcie6-586821086323.asia-southeast1.run.app)
 [![Architecture Blog](https://img.shields.io/badge/Engineering_Blog-BLOG.md-6366f1?style=for-the-badge)](./BLOG.md)
@@ -103,6 +103,13 @@ service cloud.firestore {
 
 ---
 
+## 🌐 API Security Hardening
+
+- **SSRF Protection**: Webhook dispatch endpoints (`/api/webhooks/test-ping`, `/api/export/webhook`, `/api/webhooks/dispatch`) validate every destination URL server-side before requesting it — HTTPS-only, and private/loopback/link-local/CGNAT/reserved IP ranges are rejected, including the cloud metadata address and resolved DNS results, not just literal IPs.
+- **Rate Limiting**: A baseline limiter (60 req/min per IP) covers all `/api/*` routes; a stricter shared limiter (20 req/10min per IP) covers every route that calls Gemini or an external API.
+
+---
+
 ## 🩺 System Health & Latency Telemetry
 
-- **Health Endpoint**: `GET /api/health` queries live Gemini 3.7 Flash response latency, Cloud Firestore status, and client dictation readiness.
+- **Health Endpoint**: `GET /api/health` makes real checks — a live Gemini 3.7 Flash ping, a Cloud Firestore REST reachability probe against the configured project, and a real Open-Meteo call — instead of reporting fixed statuses. Client-only capabilities (Web Speech support) are detected in the browser, not claimed by the server.

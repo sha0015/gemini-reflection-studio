@@ -11,7 +11,7 @@
 - **Core AI Model:** Gemini 3.7 Flash (`@google/genai`) with 4-tier model resilience ladder
 - **Database & Auth:** Cloud Firestore (Owner-isolated rules + Capability grants) & Firebase Google Auth / Sandbox Guest Mode
 - **Cryptography:** WebCrypto API (AES-GCM 256-bit, PBKDF2 100,000 rounds)
-- **Security Suite:** 5-Zone Agentic Threat Modeling, OWASP Code Reviewer, Firestore Rule Static Analyzer
+- **Security Suite:** 5-Zone Agentic Threat Modeling, OWASP Code Reviewer, Firestore Rule Static Analyzer, SSRF-Guarded & Rate-Limited API Gateway
 
 ---
 
@@ -36,9 +36,10 @@ Security and privacy in AI-driven applications must be provable, not aspirationa
 - **Actionable Remediation**: Gemini 3.7 Flash generates unified code patch snippets and reproducible test verification steps for each identified threat.
 
 ### 2. True Client-Side WebCrypto AES-GCM (256-bit) Encryption
-- **Browser-Thread Encryption**: Reflections are encrypted via PBKDF2 (100,000 rounds, SHA-256) and AES-GCM (256-bit) before any network dispatch.
-- **Zero Plaintext at Rest**: Cloud Firestore strictly stores encrypted envelopes (`v`, `iv`, `salt`, `ct`).
-- **Live Cryptographic Proof Panel**: Judges and users can inspect the raw ciphertext envelope stored in Firestore directly side-by-side with the decrypted client UI.
+- **Mandatory, Not Opt-In**: The first save from any real account is gated on setting a passphrase — there is no code path that writes a plaintext reflection to Firestore. The local guest sandbox is exempt since it never leaves `localStorage` at all.
+- **Dual Key-Wrap Envelope**: Each entry gets its own random AES-GCM data key. That key is independently wrapped under PBKDF2 keys (100,000 rounds, SHA-256) derived from both the passphrase and a 12-word recovery phrase — either secret alone can decrypt, so losing the passphrase doesn't mean losing the entry.
+- **Zero Plaintext at Rest**: Cloud Firestore strictly stores the ciphertext envelope (`v`, `iv`, `ct`, `keyWraps`) — title, summary, messages, insights, and action items are never written in the clear.
+- **Live Cryptographic Proof Panel**: Judges and users can inspect the actual ciphertext envelope stored in Firestore for a real entry, directly side-by-side with the decrypted client UI.
 
 ### 3. Reflection Circles & AI Redaction Diffs
 - **Automated Anonymization**: When sharing with a mentor or circle, Gemini 3.7 Flash analyzes the reflection and generates an inline redaction diff replacing identifying names, companies, and locations with generic roles.
@@ -50,6 +51,11 @@ Security and privacy in AI-driven applications must be provable, not aspirationa
 ### 5. Action Item State Machine & Distress Support
 - **Loop Closure**: Three-state commitment tracking (`open`, `done`, `dropped`) eliminates guilt while tracking real behavioral follow-through.
 - **Distress Support**: Gentle, non-clinical intervention banner offering 24/7 crisis support options whenever high distress is detected.
+
+### 6. API Security Hardening
+- **SSRF Protection on Webhook Dispatch**: `/api/webhooks/test-ping`, `/api/export/webhook`, and `/api/webhooks/dispatch` validate every destination URL server-side before making the outbound request — HTTPS-only, and private, loopback, link-local, CGNAT, and reserved IPv4/IPv6 ranges are rejected, including the cloud metadata address (`169.254.169.254`) and resolved DNS results, not just literal IPs.
+- **Rate Limiting**: A baseline limiter (60 requests/minute per IP) covers every `/api/*` route; a stricter shared limiter (20 requests/10 minutes per IP) covers every route that calls Gemini or an external API, so a single caller can't exhaust the Gemini quota or flood third-party services through this server.
+- **Real Dependency Health Checks**: `/api/health` makes an actual Firestore REST reachability probe against the configured project and an actual Open-Meteo call rather than reporting fixed "ok" statuses — a genuinely down dependency now shows as down.
 
 ---
 
