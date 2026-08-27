@@ -524,33 +524,44 @@ ${prompt}`;
 
       const hasApiKey = Boolean(process.env.GEMINI_API_KEY);
       let resultData: any;
-      let telemetry: GenerateWithFallbackResult;
+      let telemetry: GenerateWithFallbackResult | undefined;
+      let usedOfflineFallback = false;
 
       if (hasApiKey) {
-        telemetry = await generateContentWithFallback(userContent, systemPrompt, responseSchema);
         try {
-          resultData = JSON.parse(telemetry.text);
-        } catch {
-          resultData = {
-            replyText: telemetry.text || `Thank you for sharing your thoughts on ${category}. Reflecting on this allows you to gain clarity and direction.`,
-            summary: prompt.slice(0, 120) + '...',
-            keyInsights: ['Consistent reflection fosters mental clarity and proactive growth.'],
-            actionItems: ['Identify one small step you can take today.'],
-            actionItemsStructured: [
-              { id: 'act_1', text: 'Identify one small step you can take today.', status: 'open', priority: 'medium' }
-            ],
-            sentiment: 'Thoughtful',
-            suggestedTitle: existingTitle || 'Reflection on ' + (prompt.slice(0, 24) || 'Daily Thoughts'),
-            tags: ['Reflection', category],
-            distressAssessment: {
-              isDistressDetected: false,
-              category: 'None',
-              calmNotice: '',
-              resources: []
-            }
-          };
+          telemetry = await generateContentWithFallback(userContent, systemPrompt, responseSchema);
+          try {
+            resultData = JSON.parse(telemetry.text);
+          } catch {
+            resultData = {
+              replyText: telemetry.text || `Thank you for sharing your thoughts on ${category}. Reflecting on this allows you to gain clarity and direction.`,
+              summary: prompt.slice(0, 120) + '...',
+              keyInsights: ['Consistent reflection fosters mental clarity and proactive growth.'],
+              actionItems: ['Identify one small step you can take today.'],
+              actionItemsStructured: [
+                { id: 'act_1', text: 'Identify one small step you can take today.', status: 'open', priority: 'medium' }
+              ],
+              sentiment: 'Thoughtful',
+              suggestedTitle: existingTitle || 'Reflection on ' + (prompt.slice(0, 24) || 'Daily Thoughts'),
+              tags: ['Reflection', category],
+              distressAssessment: {
+                isDistressDetected: false,
+                category: 'None',
+                calmNotice: '',
+                resources: []
+              }
+            };
+          }
+        } catch (genErr) {
+          // Every model in the fallback ladder failed (quota exhausted, outage, etc.) --
+          // degrade to the same offline synthesis used when no API key is configured,
+          // rather than surfacing a raw 500 for the app's core feature.
+          console.warn('Gemini reflection generation failed entirely, using offline fallback:', genErr);
+          usedOfflineFallback = true;
         }
-      } else {
+      }
+
+      if (!hasApiKey || usedOfflineFallback) {
         telemetry = {
           text: '',
           successfulModel: 'gemini-3.7-flash (simulated)',
@@ -1353,22 +1364,32 @@ You must output a structured threat analysis strictly adhering to the requested 
 
       const hasApiKey = Boolean(process.env.GEMINI_API_KEY);
       let resultData: any;
-      let telemetry: GenerateWithFallbackResult;
+      let telemetry: GenerateWithFallbackResult | undefined;
+      let usedOfflineFallback = false;
 
       if (hasApiKey) {
-        telemetry = await generateContentWithFallback(prompt, systemInstruction, responseSchema);
         try {
-          resultData = JSON.parse(telemetry.text);
-        } catch (parseErr) {
-          resultData = generateOfflineThreatModel(architectureName, description);
+          telemetry = await generateContentWithFallback(prompt, systemInstruction, responseSchema);
+          try {
+            resultData = JSON.parse(telemetry.text);
+          } catch (parseErr) {
+            resultData = generateOfflineThreatModel(architectureName, description);
+          }
+        } catch (genErr) {
+          // Every model in the fallback ladder failed (quota exhausted, outage, etc.) --
+          // degrade to the offline generator instead of surfacing a raw 500.
+          console.warn('Threat model generation failed entirely, using offline fallback:', genErr);
+          usedOfflineFallback = true;
         }
-      } else {
+      }
+
+      if (!hasApiKey || usedOfflineFallback) {
         telemetry = {
           text: '',
-          successfulModel: 'local-security-engine',
-          attempts: [{ model: 'gemini-3.6-flash', status: 'SUCCESS', durationMs: 30 }],
+          successfulModel: hasApiKey ? 'local-security-engine (Gemini unavailable)' : 'local-security-engine',
+          attempts: [{ model: 'gemini-3.6-flash', status: hasApiKey ? 'FAILED' : 'SUCCESS', durationMs: 30 }],
           totalDurationMs: 30,
-          fallbackTriggered: false
+          fallbackTriggered: hasApiKey
         };
         resultData = generateOfflineThreatModel(architectureName, description);
       }
@@ -1464,22 +1485,32 @@ Perform an in-depth security inspection:
 
       const hasApiKey = Boolean(process.env.GEMINI_API_KEY);
       let reviewResult: any;
-      let telemetry: GenerateWithFallbackResult;
+      let telemetry: GenerateWithFallbackResult | undefined;
+      let usedOfflineFallback = false;
 
       if (hasApiKey) {
-        telemetry = await generateContentWithFallback(prompt, systemInstruction, responseSchema);
         try {
-          reviewResult = JSON.parse(telemetry.text);
-        } catch {
-          reviewResult = generateOfflineReview(codeSnippet);
+          telemetry = await generateContentWithFallback(prompt, systemInstruction, responseSchema);
+          try {
+            reviewResult = JSON.parse(telemetry.text);
+          } catch {
+            reviewResult = generateOfflineReview(codeSnippet);
+          }
+        } catch (genErr) {
+          // Every model in the fallback ladder failed (quota exhausted, outage, etc.) --
+          // degrade to the offline generator instead of surfacing a raw 500.
+          console.warn('Security review generation failed entirely, using offline fallback:', genErr);
+          usedOfflineFallback = true;
         }
-      } else {
+      }
+
+      if (!hasApiKey || usedOfflineFallback) {
         telemetry = {
           text: '',
-          successfulModel: 'local-security-reviewer',
-          attempts: [{ model: 'gemini-3.6-flash', status: 'SUCCESS', durationMs: 25 }],
+          successfulModel: hasApiKey ? 'local-security-reviewer (Gemini unavailable)' : 'local-security-reviewer',
+          attempts: [{ model: 'gemini-3.6-flash', status: hasApiKey ? 'FAILED' : 'SUCCESS', durationMs: 25 }],
           totalDurationMs: 25,
-          fallbackTriggered: false
+          fallbackTriggered: hasApiKey
         };
         reviewResult = generateOfflineReview(codeSnippet);
       }
@@ -1561,20 +1592,20 @@ Perform an in-depth security inspection:
             statusCode: status,
             errorMessage: (err?.message || 'Error').substring(0, 120),
           });
-
-          if (i === MODEL_FALLBACK_LADDER.length - 1) {
-            throw err;
-          }
+          // Don't throw here even on the last tier -- the whole point of this endpoint
+          // is to report how the ladder degraded. Losing the per-tier attempts telemetry
+          // to a generic 500 would hide exactly the information this feature exists to show.
         }
       }
 
       res.json({
-        success: true,
+        success: Boolean(successfulModel),
         text: generatedText,
-        successfulModel,
+        successfulModel: successfulModel || 'none (all tiers exhausted)',
         totalDurationMs: Date.now() - startTime,
         fallbackTriggered: attempts.some(a => a.status === 'FAILED'),
         attempts,
+        ...(successfulModel ? {} : { error: attempts[attempts.length - 1]?.errorMessage || 'All models in the fallback ladder failed.' })
       });
     } catch (err: any) {
       res.status(500).json({
