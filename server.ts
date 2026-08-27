@@ -917,7 +917,7 @@ Synthesize high-order longitudinal patterns:
   });
 
 
-  // Spatial Grounding & Live Atmospheric Weather API (Google Maps / Open-Meteo integration)
+  // Spatial Grounding & Live Atmospheric Weather API (Nominatim/OpenStreetMap geocoding + Open-Meteo weather)
   app.post('/api/spatial/weather-and-location', externalCallLimiter, async (req: Request, res: Response) => {
     try {
       const data = (req.body && typeof req.body === 'object') ? req.body : {};
@@ -1981,7 +1981,7 @@ function generateOfflineReview(code: string) {
       'Resilient Model Fallback Ladder standard helper scaffolded'
     ],
     suggestedHeaders: {
-      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self' https://ais-*.run.app https://generativelanguage.googleapis.com;",
+      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://ais-*.run.app https://generativelanguage.googleapis.com;",
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
       'Strict-Transport-Security': 'max-age=31536000; includeSubDomains'

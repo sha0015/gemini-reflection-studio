@@ -131,7 +131,7 @@ export const SecurityReviewer: React.FC = () => {
             </div>
             <h2 className="text-xl font-bold text-slate-900 mt-1">Automated Security Code & Rule Reviewer</h2>
             <p className="text-sm text-slate-600 mt-0.5">
-              Inspect source code for hardcoded secrets, prompt injection vectors, insecure Firestore rules, and improper output handling with AST data flow tracing.
+              Inspect source code for hardcoded secrets, prompt injection vectors, insecure Firestore rules, and improper output handling with an LLM-guided data-flow trace (not a compiler-grade AST/static-analysis pass).
             </p>
           </div>
 
@@ -271,7 +271,7 @@ export const SecurityReviewer: React.FC = () => {
 
                   <p className="text-xs text-slate-600">{vuln.description}</p>
 
-                  {/* AST / Data Flow Trace */}
+                  {/* LLM-Guided Data Flow Trace */}
                   <div className="p-3 bg-white rounded-lg border border-slate-200 text-xs">
                     <span className="font-semibold text-slate-800 block mb-2">Data Flow Trace (Source to Sink):</span>
                     <div className="flex flex-col md:flex-row md:items-center gap-2 text-[11px] font-mono">

@@ -67,7 +67,7 @@ export const BlogViewer: React.FC = () => {
       id: 4,
       title: 'Step 4: 5-Zone Threat Modeling & OWASP Security Reviewer',
       badge: 'AI Security Suite',
-      desc: 'Live Gemini 3.7 Flash STRIDE analysis, AST taint scanning, and rule static validation.',
+      desc: 'Live Gemini 3.7 Flash STRIDE analysis, LLM-guided data-flow tracing, and deterministic rule static validation.',
       summary: 'Security is provable: the embedded 5-Zone Threat Modeling Studio decomposes architectures across Input Surfaces, Planning, Tool Execution, Memory, and Inter-System communication, mapping vulnerabilities to OWASP LLM01-LLM10.'
     },
     {

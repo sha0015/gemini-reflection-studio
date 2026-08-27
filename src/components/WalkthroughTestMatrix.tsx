@@ -57,7 +57,7 @@ export const COMPREHENSIVE_TEST_CASES: TestCaseWalkthrough[] = [
       'Select "Hardcoded API Key & Insecure Output" sample (#btn-snippet-hardcoded-key-and-xss).',
       'Click "Run Security Audit" (#btn-run-security-review).',
       'Verify scanner identifies OWASP A02 (Cryptographic Failure) and LLM05 (Improper Output Handling).',
-      'Examine AST Data Flow Trace: Source -> Intermediate -> Execution Sink.',
+      'Examine LLM-Guided Data Flow Trace: Source -> Intermediate -> Execution Sink.',
       'Verify side-by-side unified remediation diff replaces hardcoded key with process.env.GEMINI_API_KEY.'
     ],
     expectedResult: 'Vulnerabilities flagged with CRITICAL severity, unified code patch generated, and Security Score adjusted accordingly.',

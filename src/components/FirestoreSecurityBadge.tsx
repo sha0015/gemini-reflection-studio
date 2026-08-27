@@ -186,7 +186,7 @@ service cloud.firestore {
                 </span>
               </div>
               <p className="text-xs text-slate-600">
-                Interactive security tools powered by Gemini 3.7 Flash, AST static analysis, and cryptographic rule simulation.
+                Interactive security tools powered by Gemini 3.7 Flash, LLM-guided data-flow tracing, and deterministic Firestore rule static analysis.
               </p>
             </div>
           </div>

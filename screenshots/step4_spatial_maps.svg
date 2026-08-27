@@ -5,7 +5,7 @@
   <circle cx="24" cy="21" r="6" fill="#ef4444"/>
   <circle cx="44" cy="21" r="6" fill="#f59e0b"/>
   <circle cx="64" cy="21" r="6" fill="#10b981"/>
-  <text x="90" y="25" fill="#64748b" font-size="12" font-family="monospace">Gemini Reflection Studio — Step 04: Google Maps Platform Spatial Grounding &amp; Weather</text>
+  <text x="90" y="25" fill="#64748b" font-size="12" font-family="monospace">Gemini Reflection Studio — Step 04: OpenStreetMap Spatial Grounding &amp; Open-Meteo Weather</text>
 
   <!-- Main Map Container -->
   <rect x="40" y="65" width="820" height="425" fill="#0f172a" rx="16" stroke="#1e293b" stroke-width="1.5"/>

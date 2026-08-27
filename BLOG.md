@@ -73,7 +73,7 @@ Security and privacy in AI-driven applications must be provable, not aspirationa
 │  - Path: /users/{uid}/entries │ │      (Express + TypeScript)      │
 │  - Path: /shares/{shareId}    │ │  - Gemini 3.7 Flash Model Ladder │
 │  - Zero-Knowledge Rule Guard  │ │  - 5-Zone Threat Modeling Agent  │
-│  - Capability-Based Sharing   │ │  - OWASP Code Review AST Scanner │
+│  - Capability-Based Sharing   │ │  - OWASP Code Review (LLM Trace) │
 │  - Raw Ciphertext Envelopes   │ │  - Longitudinal Pattern Agent    │
 └───────────────────────────────┘ └──────────────────────────────────┘
 ```

@@ -15,10 +15,10 @@
 
 ### 1. 🛡️ Agentic Security & Threat Modeling Suite (Beyond Baseline)
 * **5-Zone Threat Modeling Studio**: Uses Gemini 3.7 Flash to decompose complex architectures across 5 distinct threat zones (*Input Surfaces*, *Planning & Reasoning*, *Tool Execution*, *Memory & Storage*, *Inter-System Communication*). Maps every threat to **OWASP Top 10 (Web)**, **OWASP Top 10 for LLMs (LLM01-LLM10)**, and **STRIDE**, generating concrete code remediation snippets and test walkthroughs (`/api/threat-model`).
-* **OWASP Security Code Reviewer & AST Taint Analyzer**: Inspects source code and configuration files, mapping data flow from untrusted **Source** through **Intermediate** transforms into execution **Sinks**, providing unified code diffs and patch suggestions (`/api/security-review`).
-* **Firestore Rule Static Analyzer & Workbench**: Audits `firestore.rules` against wildcard bypasses, missing owner checks, and insecure defaults (`/api/rules/validate`).
+* **OWASP Security Code Reviewer (LLM-Guided Data-Flow Trace)**: Gemini 3.7 Flash inspects source code and configuration files and narrates a plausible data-flow trace from untrusted **Source** through **Intermediate** transforms into execution **Sinks**, providing unified code diffs and patch suggestions (`/api/security-review`). This is a prompted LLM analysis, not a compiler-grade AST parser or static-analysis tool.
+* **Firestore Rule Static Analyzer & Workbench**: Audits `firestore.rules` against wildcard bypasses, missing owner checks, and insecure defaults with genuine deterministic regex-based rule parsing, no LLM involved (`/api/rules/validate`).
 * **4-Tier Model Resilience Fallback Ladder**: Cascades dynamically between `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-flash-lite`, and `gemini-flash-latest` with latency metrics and simulated 503/429 recovery (`/api/gemini/resilient-test`).
-* **Walkthrough Test Matrix**: Interactive verification matrix testing automated threat modeling, rule simulation, and AST reviews against defined user stories.
+* **Walkthrough Test Matrix**: Interactive verification matrix documenting expected behavior for automated threat modeling, rule simulation, and LLM-guided code reviews against defined user stories.
 
 ---
 
