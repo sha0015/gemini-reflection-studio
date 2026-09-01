@@ -295,7 +295,7 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     activeEntry?.id || `entry_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`
   );
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   // Setup Web Speech API for voice dictation
   useEffect(() => {
@@ -348,9 +348,15 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     }
   }, [activeEntry]);
 
-  // Scroll to bottom when messages update
+  // Scroll to bottom when messages update -- scrolls only the chat panel itself
+  // (via scrollTop on the container), never scrollIntoView on the end marker,
+  // which bubbles up and drags the whole page down with it whenever the panel
+  // isn't fully visible in the viewport (e.g. while the category/persona
+  // selectors above it are also on screen).
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   }, [messages, isGenerating]);
 
   // Keyboard shortcut listener: Cmd/Ctrl + Enter to reflect
@@ -1229,7 +1235,7 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
           )}
 
           {/* Dialogue / Messages Stream */}
-          <div className="space-y-4 max-h-[520px] overflow-y-auto pr-1">
+          <div ref={messagesContainerRef} className="space-y-4 max-h-[520px] overflow-y-auto pr-1">
             {messages.length === 0 ? (
               <div className="py-12 px-4 text-center space-y-3 bg-slate-50/70 rounded-xl border border-dashed border-slate-200">
                 <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto shadow-2xs">
@@ -1333,8 +1339,6 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
                 </div>
               </div>
             )}
-
-            <div ref={messagesEndRef} />
           </div>
 
           {/* Bottom Reflection Input & Voice Controls */}
