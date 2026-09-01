@@ -259,11 +259,17 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
   const [vaultSetupError, setVaultSetupError] = useState<string | null>(null);
   const [vaultRecoveryToShow, setVaultRecoveryToShow] = useState<string | null>(null);
   // 'passphrase' = normal entry; 'mismatch' = typed passphrase doesn't decrypt existing
-  // entries; 'reset' = resetting the passphrase via the recovery phrase instead.
-  const [vaultStep, setVaultStep] = useState<'passphrase' | 'mismatch' | 'reset'>('passphrase');
+  // entries; 'reset' = resetting the passphrase via the recovery phrase instead;
+  // 'recovery-choice' / 'recovery-enter' = this browser has no local recovery phrase
+  // even though real prior entries exist -- ask before silently minting a new,
+  // disconnected one.
+  const [vaultStep, setVaultStep] = useState<'passphrase' | 'mismatch' | 'reset' | 'recovery-choice' | 'recovery-enter'>('passphrase');
   const [vaultResetInput, setVaultResetInput] = useState('');
   const [vaultResetError, setVaultResetError] = useState<string | null>(null);
   const [vaultResetBusy, setVaultResetBusy] = useState(false);
+  const [vaultRecoveryEnterInput, setVaultRecoveryEnterInput] = useState('');
+  const [vaultRecoveryEnterError, setVaultRecoveryEnterError] = useState<string | null>(null);
+  const [vaultRecoveryEnterBusy, setVaultRecoveryEnterBusy] = useState(false);
 
   // Privacy Shield State
   const [privacyShieldEnabled, setPrivacyShieldEnabled] = useState(true);
@@ -917,6 +923,9 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     setVaultResetInput('');
     setVaultResetError(null);
     setVaultResetBusy(false);
+    setVaultRecoveryEnterInput('');
+    setVaultRecoveryEnterError(null);
+    setVaultRecoveryEnterBusy(false);
   };
 
   const finishVaultSetup = () => {
@@ -929,16 +938,57 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
   const activatePassphraseAndProceed = (passphrase: string) => {
     setSessionPassphrase(passphrase);
 
-    // First time this browser has ever encrypted anything: generate a recovery
-    // phrase and force the user to see it before continuing -- it's the only way
-    // back in if the passphrase is lost. If one already exists, nothing new to show.
-    let recoveryPhrase = getStoredRecoveryPhrase();
-    if (!recoveryPhrase) {
-      recoveryPhrase = generateRecoveryPhrase();
-      setStoredRecoveryPhrase(recoveryPhrase);
-      setVaultRecoveryToShow(recoveryPhrase);
-    } else {
+    if (getStoredRecoveryPhrase()) {
       finishVaultSetup();
+      return;
+    }
+
+    // No recovery phrase on this browser. Two very different situations look
+    // identical here, so don't guess: if real encrypted entries already exist,
+    // this could be a new device that just doesn't know the original recovery
+    // phrase yet -- silently minting a new one would let it drift from the one
+    // actually wrapped into those entries. Ask instead.
+    if (findEncryptedCanaryEntry()) {
+      setVaultStep('recovery-choice');
+      return;
+    }
+
+    // Genuinely nothing to conflict with -- first entry this browser has ever
+    // encrypted for this account.
+    const recoveryPhrase = generateRecoveryPhrase();
+    setStoredRecoveryPhrase(recoveryPhrase);
+    setVaultRecoveryToShow(recoveryPhrase);
+  };
+
+  const handleUseExistingRecovery = () => {
+    setVaultStep('recovery-enter');
+    setVaultRecoveryEnterInput('');
+    setVaultRecoveryEnterError(null);
+  };
+
+  const handleGenerateNewRecoveryAnyway = () => {
+    const recoveryPhrase = generateRecoveryPhrase();
+    setStoredRecoveryPhrase(recoveryPhrase);
+    setVaultStep('passphrase');
+    setVaultRecoveryToShow(recoveryPhrase);
+  };
+
+  const handleSubmitExistingRecovery = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const phrase = vaultRecoveryEnterInput.trim();
+    const canary = findEncryptedCanaryEntry();
+    if (!phrase || !canary?.encryptedEnvelope) return;
+
+    setVaultRecoveryEnterBusy(true);
+    setVaultRecoveryEnterError(null);
+    try {
+      await decryptClientSide(canary.encryptedEnvelope as any, phrase);
+      setStoredRecoveryPhrase(phrase);
+      finishVaultSetup();
+    } catch {
+      setVaultRecoveryEnterError("That doesn't decrypt your existing entries either — double-check it, or generate a new one instead.");
+    } finally {
+      setVaultRecoveryEnterBusy(false);
     }
   };
 
@@ -1706,6 +1756,69 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
                       className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
                     >
                       {vaultResetBusy ? 'Verifying…' : 'Confirm & reset'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : vaultStep === 'recovery-choice' ? (
+              <>
+                <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                  <h3 className="text-sm font-bold text-slate-100">New device, existing vault</h3>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Your passphrase matched — but this browser doesn't have a recovery phrase saved. If you already have one from where you first set up encryption, enter it here so this device recognizes it too. Otherwise we'll generate a new one, but it won't cover entries created elsewhere under a different recovery phrase.
+                </p>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={handleUseExistingRecovery}
+                    className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    I have one
+                  </button>
+                  <button
+                    onClick={handleGenerateNewRecoveryAnyway}
+                    className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Generate a new one
+                  </button>
+                </div>
+              </>
+            ) : vaultStep === 'recovery-enter' ? (
+              <>
+                <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                  <h3 className="text-sm font-bold text-slate-100">Enter your existing recovery phrase</h3>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  We'll verify it against your existing entries before saving it to this device.
+                </p>
+                <form onSubmit={handleSubmitExistingRecovery} className="space-y-2">
+                  <textarea
+                    autoFocus
+                    rows={2}
+                    placeholder="twelve word recovery phrase, space separated"
+                    value={vaultRecoveryEnterInput}
+                    onChange={(e) => setVaultRecoveryEnterInput(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-xs font-mono text-slate-100 focus:outline-emerald-500 resize-none"
+                  />
+                  {vaultRecoveryEnterError && (
+                    <p className="text-[11px] text-rose-400 flex items-center gap-1"><AlertCircle className="w-3 h-3 shrink-0" />{vaultRecoveryEnterError}</p>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setVaultStep('recovery-choice')}
+                      className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={vaultRecoveryEnterBusy || !vaultRecoveryEnterInput.trim()}
+                      className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      {vaultRecoveryEnterBusy ? 'Verifying…' : 'Confirm'}
                     </button>
                   </div>
                 </form>
