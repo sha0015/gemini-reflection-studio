@@ -5,44 +5,47 @@
   <circle cx="24" cy="21" r="6" fill="#ef4444"/>
   <circle cx="44" cy="21" r="6" fill="#f59e0b"/>
   <circle cx="64" cy="21" r="6" fill="#10b981"/>
-  <text x="90" y="25" fill="#64748b" font-size="12" font-family="monospace">Gemini Reflection Studio — Step 04: OpenStreetMap Spatial Grounding &amp; Open-Meteo Weather</text>
+  <text x="90" y="25" fill="#64748b" font-size="12" font-family="monospace">Gemini Reflection Studio — Step 04: Spatial Grounding &amp; SSRF-Hardened Webhook Gateway</text>
 
-  <!-- Main Map Container -->
-  <rect x="40" y="65" width="820" height="425" fill="#0f172a" rx="16" stroke="#1e293b" stroke-width="1.5"/>
+  <!-- Left: Spatial Weather Card -->
+  <rect x="40" y="65" width="400" height="425" fill="#0f172a" rx="16" stroke="#1e293b" stroke-width="1.5"/>
+  <rect x="60" y="85" width="220" height="28" fill="#064e3b" rx="6" stroke="#059669" stroke-width="1"/>
+  <text x="72" y="104" fill="#6ee7b7" font-size="11.5" font-weight="700">📍 Live Spatial Grounding</text>
 
-  <!-- Map Header Bar -->
-  <rect x="60" y="85" width="320" height="34" fill="#1e293b" rx="8"/>
-  <text x="80" y="107" fill="#f8fafc" font-size="13" font-weight="700">📍 Spatial Grounding &amp; Retreats</text>
+  <!-- Location Tile -->
+  <rect x="60" y="125" width="360" height="85" fill="#022c22" rx="10" stroke="#059669" stroke-width="1"/>
+  <text x="80" y="152" fill="#f8fafc" font-size="15" font-weight="700">Kyoto Bamboo Sanctuary 🎋</text>
+  <text x="80" y="174" fill="#a7f3d0" font-size="12">Atmosphere: Misty Calm Zen • 18°C</text>
+  <text x="80" y="194" fill="#6ee7b7" font-size="11" font-family="monospace">Geo: 35.0116° N, 135.6764° E (Nominatim + Open-Meteo)</text>
 
-  <rect x="400" y="85" width="440" height="34" fill="#062e24" rx="8" stroke="#059669" stroke-width="1"/>
-  <text x="420" y="107" fill="#34d399" font-size="12" font-weight="600">Active Location: Kyoto Bamboo Sanctuary (35.01° N, 135.67° E)</text>
+  <!-- Spatial Context Grounding Preview -->
+  <rect x="60" y="225" width="360" height="245" fill="#090d16" rx="10" stroke="#1e293b"/>
+  <text x="80" y="255" fill="#38bdf8" font-size="12" font-weight="700">Gemini 3.7 Flash Context Injection:</text>
+  <text x="80" y="280" fill="#cbd5e1" font-size="12">"Spatial grounding: Kyoto sanctuary at 18°C.</text>
+  <text x="80" y="302" fill="#cbd5e1" font-size="12">Prompt incorporates local serene ambient metaphors</text>
+  <text x="80" y="324" fill="#cbd5e1" font-size="12">to induce lower cognitive friction."</text>
 
-  <!-- Simulated Google Map Visual -->
-  <rect x="60" y="135" width="780" height="230" fill="#081b26" rx="12" stroke="#1e293b"/>
-  
-  <!-- Map Grid Lines -->
-  <path d="M 60 200 L 840 200 M 60 270 L 840 270 M 250 135 L 250 365 M 500 135 L 500 365 M 700 135 L 700 365" stroke="#133549" stroke-width="1" stroke-dasharray="4,4"/>
+  <rect x="80" y="355" width="320" height="42" fill="#1e293b" rx="8"/>
+  <text x="95" y="381" fill="#cbd5e1" font-size="11">🧭 Live GPS Detect &amp; City Search Modal</text>
 
-  <!-- Map Pins -->
-  <circle cx="580" cy="230" r="18" fill="#10b981" fill-opacity="0.3"/>
-  <circle cx="580" cy="230" r="8" fill="#10b981"/>
-  <rect x="520" y="170" width="120" height="45" fill="#0f172a" rx="8" stroke="#10b981" stroke-width="1.5"/>
-  <text x="580" y="188" fill="#ffffff" font-size="11" font-weight="700" text-anchor="middle">Kyoto Sanctuary</text>
-  <text x="580" y="204" fill="#34d399" font-size="9.5" text-anchor="middle">Misty Zen • 18°C</text>
+  <!-- Right: SSRF-Hardened Webhook Dispatcher -->
+  <rect x="460" y="65" width="400" height="425" fill="#0f172a" rx="16" stroke="#1e293b" stroke-width="1.5"/>
+  <rect x="480" y="85" width="260" height="28" fill="#1e1b4b" rx="6" stroke="#6366f1" stroke-width="1"/>
+  <text x="492" y="104" fill="#c7d2fe" font-size="11.5" font-weight="700">🚀 SSRF-Hardened Webhook Dispatcher</text>
 
-  <circle cx="280" cy="210" r="6" fill="#f59e0b"/>
-  <rect x="230" y="160" width="100" height="36" fill="#0f172a" rx="6" stroke="#f59e0b" stroke-width="1"/>
-  <text x="280" y="178" fill="#ffffff" font-size="10" font-weight="600" text-anchor="middle">Alpine Cabin</text>
-  <text x="280" y="190" fill="#f59e0b" font-size="8.5" text-anchor="middle">Snowy Focus • -2°C</text>
+  <rect x="480" y="125" width="360" height="150" fill="#090d16" rx="10" stroke="#1e293b"/>
+  <text x="495" y="150" fill="#a5b4fc" font-size="12" font-weight="700">Outbound Gateway Defense:</text>
+  <text x="495" y="174" fill="#34d399" font-size="11">✓ HTTPS Protocol Strict Enforcement</text>
+  <text x="495" y="196" fill="#34d399" font-size="11">✓ DNS Pre-Resolve IP Filtering (IPv4 &amp; IPv6)</text>
+  <text x="495" y="218" fill="#f43f5e" font-size="11">✗ Blocked: 169.254.169.254 (Cloud Metadata)</text>
+  <text x="495" y="240" fill="#f43f5e" font-size="11">✗ Blocked: 127.0.0.1, 10.0.0.0/8, 192.168.0.0/16</text>
+  <text x="495" y="262" fill="#fbbf24" font-size="11">⏱ Tiered Rate Limiter: 20 req / 10 min</text>
 
-  <circle cx="150" cy="260" r="6" fill="#3b82f6"/>
-  <rect x="100" y="280" width="100" height="36" fill="#0f172a" rx="6" stroke="#3b82f6" stroke-width="1"/>
-  <text x="150" y="298" fill="#ffffff" font-size="10" font-weight="600" text-anchor="middle">SF Workspace</text>
-  <text x="150" y="310" fill="#60a5fa" font-size="8.5" text-anchor="middle">Sunny • 21°C</text>
-
-  <!-- Bottom Details Bar -->
-  <rect x="60" y="380" width="780" height="90" fill="#090d16" rx="10" stroke="#1e293b"/>
-  <text x="85" y="410" fill="#94a3b8" font-size="12" font-weight="700">Spatial Context Grounding Engine:</text>
-  <text x="85" y="432" fill="#cbd5e1" font-size="12">Coordinates and atmospheric conditions (weather, tranquility, altitude) are infused into Gemini's cognitive persona,</text>
-  <text x="85" y="452" fill="#cbd5e1" font-size="12">enabling place-aware mindfulness and contextual life reflections.</text>
+  <!-- Payload Formats -->
+  <rect x="480" y="290" width="360" height="180" fill="#020617" rx="10" stroke="#1e293b"/>
+  <text x="495" y="315" fill="#f8fafc" font-size="12" font-weight="700">Supported Broadcast Formats:</text>
+  <text x="495" y="340" fill="#6ee7b7" font-size="11.5">🟢 Slack Block Kit (Structured Actions &amp; Cards)</text>
+  <text x="495" y="365" fill="#818cf8" font-size="11.5">🟣 Discord Rich Embeds (Colored Field Badges)</text>
+  <text x="495" y="390" fill="#38bdf8" font-size="11.5">🌐 Standard JSON Webhook Payload</text>
+  <text x="495" y="425" fill="#94a3b8" font-size="10.5">Toggle: Full Sanitized Reflection OR Action Item Checklist</text>
 </svg>
