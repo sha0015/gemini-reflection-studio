@@ -25,6 +25,7 @@ export const ModelResilienceLadder: React.FC = () => {
     totalDurationMs: number;
     fallbackTriggered: boolean;
     attempts: FallbackAttempt[];
+    error?: string;
   } | null>(null);
 
   const ladderTiers = [
@@ -171,11 +172,13 @@ export const ModelResilienceLadder: React.FC = () => {
                   Resolved by: <span className="font-mono text-emerald-700">{executionResult.successfulModel}</span>
                 </span>
                 <span className={`text-[11px] font-bold px-2 py-0.5 rounded border ${
-                  executionResult.fallbackTriggered
-                    ? 'bg-amber-50 text-amber-800 border-amber-200'
-                    : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  !executionResult.success
+                    ? 'bg-rose-50 text-rose-800 border-rose-200'
+                    : executionResult.fallbackTriggered
+                      ? 'bg-amber-50 text-amber-800 border-amber-200'
+                      : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                 }`}>
-                  {executionResult.fallbackTriggered ? 'Fallback Ladder Triggered' : 'Primary Tier Success'}
+                  {!executionResult.success ? 'All Tiers Failed' : executionResult.fallbackTriggered ? 'Fallback Ladder Triggered' : 'Primary Tier Success'}
                 </span>
               </div>
             </div>
@@ -187,10 +190,18 @@ export const ModelResilienceLadder: React.FC = () => {
           </div>
 
           <div>
-            <span className="text-xs font-semibold text-slate-700 block mb-1.5">Model Generated Payload Response:</span>
-            <div className="p-3 bg-slate-900 text-slate-100 rounded-lg text-xs font-mono whitespace-pre-wrap">
-              {executionResult.text}
-            </div>
+            <span className="text-xs font-semibold text-slate-700 block mb-1.5">
+              {executionResult.success ? 'Model Generated Payload Response:' : 'Ladder Exhausted — No Response:'}
+            </span>
+            {executionResult.success ? (
+              <div className="p-3 bg-slate-900 text-slate-100 rounded-lg text-xs font-mono whitespace-pre-wrap">
+                {executionResult.text}
+              </div>
+            ) : (
+              <div className="p-3 bg-rose-950 text-rose-200 rounded-lg text-xs font-mono whitespace-pre-wrap">
+                Every tier in the fallback ladder failed. Last error: {executionResult.error || 'Unknown error.'}
+              </div>
+            )}
           </div>
 
           <div className="space-y-1 text-xs">

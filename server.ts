@@ -1613,20 +1613,21 @@ Perform an in-depth security inspection:
             errorMessage: (err?.message || 'Error').substring(0, 120),
           });
 
-          if (i === MODEL_FALLBACK_LADDER.length - 1) {
-            successfulModel = 'local-resilience-engine (fallback)';
-            generatedText = `[Resilience Ladder Activated]: All upstream cloud endpoints traversed. The fallback engine preserved zero-downtime availability for: "${prompt.slice(0, 40)}..."`;
-          }
+          // Deliberately no fabricated "success" here even on the last tier --
+          // this endpoint's entire purpose is reporting how the ladder actually
+          // degraded. Claiming zero-downtime availability when every real model
+          // call failed would be false, not resilient.
         }
       }
 
       res.json({
-        success: true,
+        success: Boolean(successfulModel),
         text: generatedText,
-        successfulModel,
+        successfulModel: successfulModel || 'none (all tiers exhausted)',
         totalDurationMs: Date.now() - startTime,
         fallbackTriggered: attempts.some(a => a.status === 'FAILED'),
         attempts,
+        ...(successfulModel ? {} : { error: attempts[attempts.length - 1]?.errorMessage || 'All models in the fallback ladder failed.' })
       });
     } catch (err: any) {
       res.status(500).json({
