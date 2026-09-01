@@ -521,9 +521,11 @@ ${prompt}`;
 
       const hasApiKey = Boolean(process.env.GEMINI_API_KEY);
       let resultData: any;
-      let telemetry: GenerateWithFallbackResult;
+      let telemetry: GenerateWithFallbackResult | undefined;
+      let usedOfflineFallback = false;
 
       if (hasApiKey) {
+       try {
         telemetry = await generateContentWithFallback(userContent, systemPrompt, responseSchema);
         try {
           if (telemetry.text && telemetry.text.trim().startsWith('{')) {
@@ -570,7 +572,16 @@ What is the single most important realization you want to carry forward from thi
             }
           };
         }
-      } else {
+       } catch (genErr) {
+        // Every model in the fallback ladder failed (quota exhausted, outage, etc.) --
+        // degrade to the same offline synthesis used when no API key is configured,
+        // rather than surfacing a raw 500 for the app's core feature.
+        console.warn('Gemini reflection generation failed entirely, using offline fallback:', genErr);
+        usedOfflineFallback = true;
+       }
+      }
+
+      if (!hasApiKey || usedOfflineFallback) {
         telemetry = {
           text: '',
           successfulModel: 'gemini-3.7-flash (simulated)',
@@ -1373,22 +1384,32 @@ You must output a structured threat analysis strictly adhering to the requested 
 
       const hasApiKey = Boolean(process.env.GEMINI_API_KEY);
       let resultData: any;
-      let telemetry: GenerateWithFallbackResult;
+      let telemetry: GenerateWithFallbackResult | undefined;
+      let usedOfflineFallback = false;
 
       if (hasApiKey) {
-        telemetry = await generateContentWithFallback(prompt, systemInstruction, responseSchema);
         try {
-          resultData = JSON.parse(telemetry.text);
-        } catch (parseErr) {
-          resultData = generateOfflineThreatModel(architectureName, description);
+          telemetry = await generateContentWithFallback(prompt, systemInstruction, responseSchema);
+          try {
+            resultData = JSON.parse(telemetry.text);
+          } catch (parseErr) {
+            resultData = generateOfflineThreatModel(architectureName, description);
+          }
+        } catch (genErr) {
+          // Every model in the fallback ladder failed (quota exhausted, outage, etc.) --
+          // degrade to the offline generator instead of surfacing a raw 500.
+          console.warn('Threat model generation failed entirely, using offline fallback:', genErr);
+          usedOfflineFallback = true;
         }
-      } else {
+      }
+
+      if (!hasApiKey || usedOfflineFallback) {
         telemetry = {
           text: '',
-          successfulModel: 'local-security-engine',
-          attempts: [{ model: 'gemini-3.6-flash', status: 'SUCCESS', durationMs: 30 }],
+          successfulModel: hasApiKey ? 'local-security-engine (Gemini unavailable)' : 'local-security-engine',
+          attempts: [{ model: 'gemini-3.6-flash', status: hasApiKey ? 'FAILED' : 'SUCCESS', durationMs: 30 }],
           totalDurationMs: 30,
-          fallbackTriggered: false
+          fallbackTriggered: hasApiKey
         };
         resultData = generateOfflineThreatModel(architectureName, description);
       }
@@ -1484,16 +1505,26 @@ Perform an in-depth security inspection:
 
       const hasApiKey = Boolean(process.env.GEMINI_API_KEY);
       let reviewResult: any;
-      let telemetry: GenerateWithFallbackResult;
+      let telemetry: GenerateWithFallbackResult | undefined;
+      let usedOfflineFallback = false;
 
       if (hasApiKey) {
-        telemetry = await generateContentWithFallback(prompt, systemInstruction, responseSchema);
         try {
-          reviewResult = JSON.parse(telemetry.text);
-        } catch {
-          reviewResult = generateOfflineReview(codeSnippet);
+          telemetry = await generateContentWithFallback(prompt, systemInstruction, responseSchema);
+          try {
+            reviewResult = JSON.parse(telemetry.text);
+          } catch {
+            reviewResult = generateOfflineReview(codeSnippet);
+          }
+        } catch (genErr) {
+          // Every model in the fallback ladder failed (quota exhausted, outage, etc.) --
+          // degrade to the offline generator instead of surfacing a raw 500.
+          console.warn('Security review generation failed entirely, using offline fallback:', genErr);
+          usedOfflineFallback = true;
         }
-      } else {
+      }
+
+      if (!hasApiKey || usedOfflineFallback) {
         telemetry = {
           text: '',
           successfulModel: 'local-security-reviewer',
