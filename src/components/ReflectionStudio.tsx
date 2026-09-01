@@ -78,6 +78,15 @@ interface ReflectionStudioProps {
   onNewEntry?: () => void;
 }
 
+// Recovery phrases and generated passphrases are both "a bunch of words" now that
+// generatePassphrase() exists, which makes them easy to paste into the wrong field
+// under time pressure. Catches the specific generatePassphrase() shape
+// (Capitalized-word-word-word-word-NN) so that mistake gets a precise, immediate
+// message instead of waiting on a crypto failure with a vague one.
+function looksLikeGeneratedPassphrase(input: string): boolean {
+  return /^[A-Z][a-z]+(-[a-z]+){3,4}-\d{2}$/.test(input.trim());
+}
+
 const CATEGORIES: { id: EntryCategory; label: string; icon: string; promptPlaceholder: string }[] = [
   { 
     id: 'reflection', 
@@ -979,6 +988,11 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     const canary = findEncryptedCanaryEntry();
     if (!phrase || !canary?.encryptedEnvelope) return;
 
+    if (looksLikeGeneratedPassphrase(phrase)) {
+      setVaultRecoveryEnterError('That looks like a passphrase (word-word-word-##), not a recovery phrase. Recovery phrases are 12 lowercase words separated by spaces.');
+      return;
+    }
+
     setVaultRecoveryEnterBusy(true);
     setVaultRecoveryEnterError(null);
     try {
@@ -1036,6 +1050,11 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     const recoveryPhrase = vaultResetInput.trim();
     const canary = findEncryptedCanaryEntry();
     if (!recoveryPhrase || !canary?.encryptedEnvelope) return;
+
+    if (looksLikeGeneratedPassphrase(recoveryPhrase)) {
+      setVaultResetError('That looks like a passphrase (word-word-word-##), not a recovery phrase. Recovery phrases are 12 lowercase words separated by spaces.');
+      return;
+    }
 
     setVaultResetBusy(true);
     setVaultResetError(null);
