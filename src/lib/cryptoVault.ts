@@ -181,3 +181,22 @@ export function generateRecoveryPhrase(): string {
   }
   return words.join(' ');
 }
+
+/**
+ * Generates a strong, memorable passphrase as an alternative to the user typing
+ * their own -- five random words plus a two-digit number, hyphenated, with the
+ * first word capitalized so it's visually distinct from the space-separated
+ * lowercase recovery phrase at a glance. ~34 bits of entropy before PBKDF2,
+ * comfortably above the 8-character minimum and far easier to remember and
+ * type correctly than an equivalent-strength random string.
+ */
+export function generatePassphrase(): string {
+  const randomBytes = new Uint8Array(6);
+  window.crypto.getRandomValues(randomBytes);
+
+  const words = Array.from(randomBytes.slice(0, 5)).map(b => MNEMONIC_WORDS[b % MNEMONIC_WORDS.length]);
+  words[0] = words[0].charAt(0).toUpperCase() + words[0].slice(1);
+  const number = 10 + (randomBytes[5] % 90); // 10-99
+
+  return `${words.join('-')}-${number}`;
+}

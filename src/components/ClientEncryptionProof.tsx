@@ -16,10 +16,11 @@ import {
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { JournalEntry } from '../types';
-import { 
-  generateRecoveryPhrase, 
-  encryptClientSide, 
-  decryptClientSide 
+import {
+  generateRecoveryPhrase,
+  generatePassphrase,
+  encryptClientSide,
+  decryptClientSide
 } from '../lib/cryptoVault';
 import { 
   getSessionPassphrase, 
@@ -66,14 +67,62 @@ export const ClientEncryptionProof: React.FC<ClientEncryptionProofProps> = ({
   }, [entries]);
 
   const selectedEntry = encryptedEntries.find(e => e.id === selectedEntryId);
+  const [passphraseVisible, setPassphraseVisible] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
 
-  const handleSavePassphrase = () => {
-    if (!passphraseInput.trim()) {
-      alert('Please enter a secure client passphrase.');
+  const handleGeneratePassphrase = () => {
+    setPassphraseInput(generatePassphrase());
+    setPassphraseVisible(true);
+    setSaveError(null);
+    setShowResetConfirm(false);
+  };
+
+  // Same principle as the Studio save gate: a typed passphrase must actually
+  // decrypt an existing entry before it's trusted, or a mistyped one would
+  // silently fork the vault instead of failing loudly.
+  const handleSavePassphrase = async () => {
+    const pass = passphraseInput.trim();
+    if (!pass) {
+      setSaveError('Enter a passphrase first.');
       return;
     }
-    setSessionPassphrase(passphraseInput);
-    if (onPassphraseChanged) onPassphraseChanged(passphraseInput);
+    const canary = selectedEntry || encryptedEntries[0];
+    if (canary?.encryptedEnvelope) {
+      try {
+        await decryptClientSide(canary.encryptedEnvelope as any, pass);
+      } catch {
+        setSaveError("This doesn't match your existing entries.");
+        setShowResetConfirm(true);
+        return;
+      }
+    }
+    setSessionPassphrase(pass);
+    setSaveError(null);
+    setShowResetConfirm(false);
+    if (onPassphraseChanged) onPassphraseChanged(pass);
+  };
+
+  // The recovery phrase is already known on this device (it's right there on
+  // screen) -- resetting just confirms it still decrypts real data, then
+  // adopts the newly typed passphrase for everything saved from now on.
+  const handleResetWithStoredRecovery = async () => {
+    const canary = selectedEntry || encryptedEntries[0];
+    if (!canary?.encryptedEnvelope || !recoveryPhrase) return;
+    setResetBusy(true);
+    try {
+      await decryptClientSide(canary.encryptedEnvelope as any, recoveryPhrase);
+      const pass = passphraseInput.trim();
+      setSessionPassphrase(pass);
+      setSaveError(null);
+      setShowResetConfirm(false);
+      if (onPassphraseChanged) onPassphraseChanged(pass);
+    } catch {
+      setSaveError("Even your saved recovery phrase doesn't match this entry — you may be signed into the wrong account.");
+    } finally {
+      setResetBusy(false);
+    }
   };
 
   // Decrypts the actually-selected entry's real ciphertext envelope with whatever
@@ -142,13 +191,23 @@ export const ClientEncryptionProof: React.FC<ClientEncryptionProofProps> = ({
               Active Encryption Passphrase
             </label>
             <div className="flex gap-2">
-              <input
-                type="password"
-                placeholder="Enter client encryption key..."
-                value={passphraseInput}
-                onChange={(e) => setPassphraseInput(e.target.value)}
-                className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-100 focus:outline-emerald-500"
-              />
+              <div className="relative flex-1">
+                <input
+                  type={passphraseVisible ? 'text' : 'password'}
+                  placeholder="Enter client encryption key..."
+                  value={passphraseInput}
+                  onChange={(e) => { setPassphraseInput(e.target.value); setSaveError(null); setShowResetConfirm(false); }}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-3 pr-8 py-2 text-xs font-mono text-slate-100 focus:outline-emerald-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setPassphraseVisible(v => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
+                  title={passphraseVisible ? 'Hide' : 'Reveal'}
+                >
+                  {passphraseVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
               <button
                 onClick={handleSavePassphrase}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs"
@@ -156,6 +215,27 @@ export const ClientEncryptionProof: React.FC<ClientEncryptionProofProps> = ({
                 Set Key
               </button>
             </div>
+            <button
+              onClick={handleGeneratePassphrase}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-slate-900/60 hover:bg-slate-900 border border-dashed border-slate-700 text-slate-300 rounded-lg text-[11px] font-semibold cursor-pointer"
+            >
+              <Key className="w-3 h-3 text-emerald-400" />
+              Generate a strong passphrase for me
+            </button>
+            {saveError && (
+              <div className="text-[11px] text-rose-300 bg-rose-950/40 border border-rose-800/60 rounded-lg p-2.5 space-y-2">
+                <p className="flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 shrink-0" />{saveError}</p>
+                {showResetConfirm && (
+                  <button
+                    onClick={handleResetWithStoredRecovery}
+                    disabled={resetBusy}
+                    className="w-full px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                  >
+                    {resetBusy ? 'Verifying…' : "Reset using this device's recovery phrase"}
+                  </button>
+                )}
+              </div>
+            )}
             <p className="text-[11px] text-slate-400">
               Keys are derived client-side via PBKDF2 with a unique 16-byte random cryptographic salt.
             </p>

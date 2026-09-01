@@ -245,6 +245,7 @@ export default function App() {
           <ReflectionStudio
             user={user}
             activeEntry={activeEntry}
+            entries={entries}
             onEntrySaved={(saved) => setActiveEntry(saved)}
             onNewEntry={handleStartNewEntry}
           />

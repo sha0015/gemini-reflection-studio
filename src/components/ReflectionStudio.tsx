@@ -46,7 +46,10 @@ import {
   Wind,
   Droplets,
   Thermometer,
-  SendHorizonal
+  SendHorizonal,
+  Eye,
+  EyeOff,
+  KeyRound
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { User } from 'firebase/auth';
@@ -64,12 +67,13 @@ import {
   ActionItem
 } from '../types';
 import { DistressBanner } from './DistressBanner';
-import { encryptClientSide, generateRecoveryPhrase } from '../lib/cryptoVault';
+import { encryptClientSide, decryptClientSide, generateRecoveryPhrase, generatePassphrase } from '../lib/cryptoVault';
 import { getSessionPassphrase, setSessionPassphrase, getStoredRecoveryPhrase, setStoredRecoveryPhrase, queueOfflineEntry } from '../lib/offlineQueue';
 
 interface ReflectionStudioProps {
   user: User;
   activeEntry?: JournalEntry | null;
+  entries?: JournalEntry[];
   onEntrySaved?: (entry: JournalEntry) => void;
   onNewEntry?: () => void;
 }
@@ -216,6 +220,7 @@ function redactPII(text: string): { sanitized: string; count: number; tokenMap: 
 export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
   user,
   activeEntry,
+  entries,
   onEntrySaved,
   onNewEntry
 }) => {
@@ -250,8 +255,15 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
   const [showVaultSetupModal, setShowVaultSetupModal] = useState(false);
   const [pendingSaveOverride, setPendingSaveOverride] = useState<Partial<JournalEntry> | null>(null);
   const [vaultPassphraseInput, setVaultPassphraseInput] = useState('');
+  const [vaultPassphraseVisible, setVaultPassphraseVisible] = useState(false);
   const [vaultSetupError, setVaultSetupError] = useState<string | null>(null);
   const [vaultRecoveryToShow, setVaultRecoveryToShow] = useState<string | null>(null);
+  // 'passphrase' = normal entry; 'mismatch' = typed passphrase doesn't decrypt existing
+  // entries; 'reset' = resetting the passphrase via the recovery phrase instead.
+  const [vaultStep, setVaultStep] = useState<'passphrase' | 'mismatch' | 'reset'>('passphrase');
+  const [vaultResetInput, setVaultResetInput] = useState('');
+  const [vaultResetError, setVaultResetError] = useState<string | null>(null);
+  const [vaultResetBusy, setVaultResetBusy] = useState(false);
 
   // Privacy Shield State
   const [privacyShieldEnabled, setPrivacyShieldEnabled] = useState(true);
@@ -882,24 +894,33 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
 
   // Finalizes vault setup (passphrase now active for this session) and retries
   // whatever save was waiting on it.
-  const finishVaultSetup = () => {
+  // The most recently saved encrypted entry, used purely as a live decryption
+  // canary -- if a typed secret can unwrap this entry's data key, it's the right
+  // secret. There's no separate stored password hash anywhere; this check *is*
+  // the verification.
+  const findEncryptedCanaryEntry = () =>
+    (entries || []).find(e => e.isClientEncrypted && e.encryptedEnvelope);
+
+  const resetVaultModalState = () => {
     setShowVaultSetupModal(false);
     setVaultPassphraseInput('');
+    setVaultPassphraseVisible(false);
     setVaultSetupError(null);
     setVaultRecoveryToShow(null);
+    setVaultStep('passphrase');
+    setVaultResetInput('');
+    setVaultResetError(null);
+    setVaultResetBusy(false);
+  };
+
+  const finishVaultSetup = () => {
+    resetVaultModalState();
     const override = pendingSaveOverride;
     setPendingSaveOverride(null);
     persistToFirestore(override || undefined);
   };
 
-  const handleUnlockVault = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    const passphrase = vaultPassphraseInput.trim();
-    if (passphrase.length < 8) {
-      setVaultSetupError('Use a passphrase of at least 8 characters.');
-      return;
-    }
-    setVaultSetupError(null);
+  const activatePassphraseAndProceed = (passphrase: string) => {
     setSessionPassphrase(passphrase);
 
     // First time this browser has ever encrypted anything: generate a recovery
@@ -915,12 +936,70 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
     }
   };
 
-  const handleCancelVaultSetup = () => {
-    setShowVaultSetupModal(false);
-    setPendingSaveOverride(null);
+  const handleUnlockVault = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const passphrase = vaultPassphraseInput.trim();
+    if (passphrase.length < 8) {
+      setVaultSetupError('Use a passphrase of at least 8 characters.');
+      return;
+    }
+    setVaultSetupError(null);
+
+    // If any entry is already encrypted, this typed passphrase must actually
+    // decrypt it before we trust it -- otherwise a mistyped or half-remembered
+    // passphrase would silently start a second, disconnected vault instead of
+    // failing loudly.
+    const canary = findEncryptedCanaryEntry();
+    if (canary?.encryptedEnvelope) {
+      try {
+        await decryptClientSide(canary.encryptedEnvelope as any, passphrase);
+      } catch {
+        setVaultStep('mismatch');
+        return;
+      }
+    }
+
+    activatePassphraseAndProceed(passphrase);
+  };
+
+  const handleGeneratePassphrase = () => {
+    const generated = generatePassphrase();
+    setVaultPassphraseInput(generated);
+    setVaultPassphraseVisible(true);
+    setVaultSetupError(null);
+  };
+
+  const handleTryPassphraseAgain = () => {
+    setVaultStep('passphrase');
     setVaultPassphraseInput('');
     setVaultSetupError(null);
-    setVaultRecoveryToShow(null);
+  };
+
+  const handleResetWithRecovery = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const recoveryPhrase = vaultResetInput.trim();
+    const canary = findEncryptedCanaryEntry();
+    if (!recoveryPhrase || !canary?.encryptedEnvelope) return;
+
+    setVaultResetBusy(true);
+    setVaultResetError(null);
+    try {
+      await decryptClientSide(canary.encryptedEnvelope as any, recoveryPhrase);
+      // Recovery phrase confirmed valid against real data -- the passphrase
+      // typed a moment ago is now deliberately adopted as the new one. Existing
+      // entries stay wrapped under the old passphrase; they remain reachable
+      // through this same recovery phrase, which never changes.
+      activatePassphraseAndProceed(vaultPassphraseInput.trim());
+    } catch {
+      setVaultResetError('That recovery phrase doesn\'t match your existing entries either.');
+    } finally {
+      setVaultResetBusy(false);
+    }
+  };
+
+  const handleCancelVaultSetup = () => {
+    resetVaultModalState();
+    setPendingSaveOverride(null);
   };
 
   // This entry's content is encrypted and couldn't be decrypted with the current
@@ -1564,6 +1643,69 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
                   I've saved it — Continue
                 </button>
               </>
+            ) : vaultStep === 'mismatch' ? (
+              <>
+                <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <ShieldAlert className="w-5 h-5 text-amber-400" />
+                  <h3 className="text-sm font-bold text-slate-100">That doesn't match your existing entries</h3>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  This passphrase can't decrypt what you've already saved. Typing it anyway would start a second, disconnected vault instead of unlocking your real one — so it's blocked rather than silently forked.
+                </p>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={handleTryPassphraseAgain}
+                    className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Try again
+                  </button>
+                  <button
+                    onClick={() => { setVaultStep('reset'); setVaultResetError(null); }}
+                    className="flex-1 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Use recovery phrase
+                  </button>
+                </div>
+              </>
+            ) : vaultStep === 'reset' ? (
+              <>
+                <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                  <h3 className="text-sm font-bold text-slate-100">Reset your passphrase</h3>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Enter your 12-word recovery phrase to confirm it's really you. Once confirmed, <span className="text-slate-200 font-semibold">{vaultPassphraseInput || 'the passphrase you just typed'}</span> becomes your passphrase going forward. Existing entries stay exactly as they are — this recovery phrase still unlocks them.
+                </p>
+                <form onSubmit={handleResetWithRecovery} className="space-y-2">
+                  <textarea
+                    autoFocus
+                    rows={2}
+                    placeholder="twelve word recovery phrase, space separated"
+                    value={vaultResetInput}
+                    onChange={(e) => setVaultResetInput(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-xs font-mono text-slate-100 focus:outline-emerald-500 resize-none"
+                  />
+                  {vaultResetError && (
+                    <p className="text-[11px] text-rose-400 flex items-center gap-1"><AlertCircle className="w-3 h-3 shrink-0" />{vaultResetError}</p>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleTryPassphraseAgain}
+                      className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={vaultResetBusy || !vaultResetInput.trim()}
+                      className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      {vaultResetBusy ? 'Verifying…' : 'Confirm & reset'}
+                    </button>
+                  </div>
+                </form>
+              </>
             ) : (
               <>
                 <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
@@ -1574,14 +1716,32 @@ export const ReflectionStudio: React.FC<ReflectionStudioProps> = ({
                   Every reflection is encrypted client-side before it reaches Firestore — plaintext never touches the server. Enter your passphrase to continue saving. If this is your first time, this creates it. Use the same one every time so your entries stay unlockable.
                 </p>
                 <form onSubmit={handleUnlockVault} className="space-y-2">
-                  <input
-                    type="password"
-                    autoFocus
-                    placeholder="Encryption passphrase (min. 8 characters)"
-                    value={vaultPassphraseInput}
-                    onChange={(e) => setVaultPassphraseInput(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-xs font-mono text-slate-100 focus:outline-emerald-500"
-                  />
+                  <div className="relative">
+                    <input
+                      type={vaultPassphraseVisible ? 'text' : 'password'}
+                      autoFocus
+                      placeholder="Encryption passphrase (min. 8 characters)"
+                      value={vaultPassphraseInput}
+                      onChange={(e) => setVaultPassphraseInput(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-3 pr-9 py-2.5 text-xs font-mono text-slate-100 focus:outline-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setVaultPassphraseVisible(v => !v)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
+                      title={vaultPassphraseVisible ? 'Hide' : 'Reveal'}
+                    >
+                      {vaultPassphraseVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleGeneratePassphrase}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-800/60 hover:bg-slate-800 border border-dashed border-slate-700 text-slate-300 rounded-lg text-[11px] font-semibold cursor-pointer"
+                  >
+                    <KeyRound className="w-3.5 h-3.5 text-emerald-400" />
+                    Generate a strong passphrase for me
+                  </button>
                   {vaultSetupError && (
                     <p className="text-[11px] text-rose-400 flex items-center gap-1"><AlertCircle className="w-3 h-3 shrink-0" />{vaultSetupError}</p>
                   )}
