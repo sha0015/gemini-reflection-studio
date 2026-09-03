@@ -86,7 +86,7 @@ To solve this, we built **Gemini Reflection Studio & Security Suite**—a full-s
 ---
 
 ### 6. 🌿 Distress-Aware Support Routing & Offline Buffer
-* **Gentle Intervention Banner**: Evaluates reflection text for severe distress or crisis indicators. Surfaces calm, dismissible 24/7 crisis support options (988 Lifeline, Crisis Text Line) alongside non-clinical disclaimers.
+* **Gentle Intervention Banner**: Evaluates reflection text for severe distress or crisis indicators. Surfaces calm, dismissible 24/7 crisis support options (Tele-MANAS primary 14416 / toll-free 1-800-891-4416, Vandrevala Foundation, and findahelpline.com) alongside non-clinical disclaimers.
 * **Offline Resilience Queue**: Buffers entries locally in `localStorage` when network drops and automatically syncs to Firestore upon reconnection.
 
 ---

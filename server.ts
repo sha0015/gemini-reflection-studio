@@ -445,6 +445,11 @@ Mode Guidance: ${instruction}${spatialGroundingPrompt}
 CRITICAL SAFETY & DISTRESS INSTRUCTION:
 - You must NEVER diagnose medical/psychiatric conditions or provide clinical prescriptions.
 - If the user articulates acute emotional crisis, self-harm thoughts, or severe despair, maintain calm empathy, avoid amplifying distress or mirroring catastrophizing, and trigger the distressAssessment structure with compassionate guidance.
+- If distress or crisis is detected, populate resources with Indian crisis helplines only:
+  1. Tele-MANAS (Govt of India): 14416 (Primary) / 1-800-891-4416 (Toll-Free)
+  2. Vandrevala Foundation: +91 9999 666 555
+  3. Find A Helpline: findahelpline.com (Web resource)
+  Strictly do not output US-specific numbers (no 988, no Crisis Text Line).
 
 Analyze the user's latest reflection in the context of their conversation history.
 Provide:
@@ -625,6 +630,28 @@ What aspect of this feels most important for you to focus on next?`,
         };
       }
 
+      // Canonical Indian crisis resources (Tele-MANAS primary/toll-free, Vandrevala Foundation secondary, findahelpline.com web)
+      const INDIAN_CRISIS_RESOURCES = [
+        {
+          name: 'Tele-MANAS (Govt of India)',
+          contact: '14416 (Primary) / 1-800-891-4416',
+          description: 'Free 24/7 national tele-mental health counseling across all Indian states and languages.',
+          available: '24/7 Toll-Free'
+        },
+        {
+          name: 'Vandrevala Foundation',
+          contact: '+91 9999 666 555',
+          description: 'Free, confidential 24/7 psychological counseling and crisis intervention across India.',
+          available: '24/7 Free'
+        },
+        {
+          name: 'Find A Helpline',
+          contact: 'findahelpline.com',
+          description: 'Free, confidential online directory to locate verified crisis and mental health support services.',
+          available: 'Online Directory'
+        }
+      ];
+
       // Check distress keywords heuristically as an additional safety net
       const distressTriggers = ['kill myself', 'end it all', 'want to die', 'cant take this anymore', 'no reason to live', 'hopeless'];
       const promptLower = prompt.toLowerCase();
@@ -635,27 +662,11 @@ What aspect of this feels most important for you to focus on next?`,
           isDistressDetected: true,
           category: 'Crisis_Distress',
           calmNotice: 'It sounds like you are carrying profound emotional weight right now. You deserve compassionate support, and you do not have to navigate this alone.',
-          resources: [
-            {
-              name: 'Tele-MANAS (Govt of India Mental Health Helpline)',
-              contact: '14416 / 1800-891-4416',
-              description: 'Free, confidential 24/7 tele-counseling across all Indian languages.',
-              available: '24/7 Free toll-free'
-            },
-            {
-              name: 'KIRAN Mental Health Helpline',
-              contact: '1800-599-0019',
-              description: 'Dedicated national psychological support helpline by Govt of India.',
-              available: '24/7 Toll-free'
-            },
-            {
-              name: 'International Suicide & Crisis Lifeline',
-              contact: 'Dial 988 (USA/Canada) or visit findahelpline.com',
-              description: 'Global immediate crisis intervention and empathetic listening.',
-              available: '24/7 Worldwide directories'
-            }
-          ]
+          resources: INDIAN_CRISIS_RESOURCES
         };
+      } else if (resultData.distressAssessment?.isDistressDetected) {
+        // Enforce Indian crisis resources only, ensuring no US numbers are surfaced
+        resultData.distressAssessment.resources = INDIAN_CRISIS_RESOURCES;
       }
 
       const responsePayload = {
